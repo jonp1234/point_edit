@@ -129,6 +129,18 @@
     margin-bottom: 16px;
   }
   .panel h2 { font-size: 14px; margin: 0 0 12px 0; color: #333; }
+  #tableHeaderRow { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  #tableHeaderRow h2 { margin: 0; }
+  #exportCsvBtn {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #333;
+  }
+  #exportCsvBtn:hover { background: #f5f9fc; border-color: #0079c1; color: #0079c1; }
 
   #mapDiv { height: 520px; border-radius: 6px; overflow: hidden; }
 
@@ -186,7 +198,10 @@
 
     <div id="mainGrid">
       <div class="panel">
-        <h2>All points</h2>
+        <div id="tableHeaderRow">
+          <h2>All points</h2>
+          <button id="exportCsvBtn" type="button">Export CSV</button>
+        </div>
         <div id="tableWrap">
           <table>
             <thead>
@@ -222,9 +237,10 @@ require([
   "esri/layers/FeatureLayer",
   "esri/renderers/UniqueValueRenderer",
   "esri/layers/support/LabelClass",
+  "esri/geometry/support/webMercatorUtils",
   "esri/widgets/BasemapGallery",
   "esri/widgets/Expand"
-], function (esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, UniqueValueRenderer, LabelClass, BasemapGallery, Expand) {
+], function (esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, UniqueValueRenderer, LabelClass, webMercatorUtils, BasemapGallery, Expand) {
 
   // =========================== CONFIG ===================================
   const CLIENT_ID = "Y4nNFLiG8tQXFLJU";
@@ -235,6 +251,7 @@ require([
   const ADDRESS_FIELD = "Address";
   const STATUS_COMPLETED_VALUE = "completed";
   const AUTO_REFRESH_SECONDS = 30;
+  const USA_EXTENT = { xmin: -125, ymin: 24, xmax: -66, ymax: 49, spatialReference: { wkid: 4326 } };
   // ========================================================================
 
   const oauthInfo = new OAuthInfo({
@@ -333,9 +350,11 @@ require([
       pointsLayer.labelsVisible = true;
 
       const map = new Map({ basemap: "hybrid", layers: [pointsLayer] }); // "hybrid" = Imagery Hybrid
-      view = new MapView({ container: "mapDiv", map: map, zoom: 12, ui: { components: ["zoom"] } });
-      view.when(function () {
-        view.goTo(pointsLayer.fullExtent).catch(function () {});
+      view = new MapView({
+        container: "mapDiv",
+        map: map,
+        extent: USA_EXTENT, // default view: the continental USA, rather than zooming to the points
+        ui: { components: ["zoom"] }
       });
 
       const basemapGallery = new BasemapGallery({ view: view });
@@ -360,6 +379,7 @@ require([
       });
 
       document.getElementById("refreshBtn").addEventListener("click", refreshAll);
+      document.getElementById("exportCsvBtn").addEventListener("click", exportTableToCsv);
 
       refreshAll();
       setInterval(refreshAll, AUTO_REFRESH_SECONDS * 1000);
@@ -417,8 +437,8 @@ require([
     });
   }
 
-  function renderTable() {
-    const rows = allRows.slice().sort(function (a, b) {
+  function getSortedRows() {
+    return allRows.slice().sort(function (a, b) {
       const key = sortKey === "EditDate" ? editDateField : sortKey;
       let av = a.attrs[key], bv = b.attrs[key];
       if (av == null) av = "";
@@ -427,6 +447,64 @@ require([
       if (av > bv) return 1 * sortDir;
       return 0;
     });
+  }
+
+  // Converts a geometry (in whatever spatial reference the layer uses) to
+  // plain geographic lat/lon, so the CSV export always has usable coordinates.
+  function toLatLon(geometry) {
+    if (!geometry) return { lat: "", lon: "" };
+    const geo = geometry.spatialReference && geometry.spatialReference.isWebMercator
+      ? webMercatorUtils.webMercatorToGeographic(geometry)
+      : geometry;
+    return { lat: geo.y.toFixed(6), lon: geo.x.toFixed(6) };
+  }
+
+  function csvEscape(value) {
+    const s = value === null || value === undefined ? "" : String(value);
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  function exportTableToCsv() {
+    const rows = getSortedRows();
+    const headers = ["Address", "ID", "Status", "Notes", "Latitude", "Longitude"];
+    if (editDateField) headers.push("Last Edited");
+
+    const lines = [headers.map(csvEscape).join(",")];
+
+    rows.forEach(function (row) {
+      const attrs = row.attrs;
+      const statusVal = (attrs[STATUS_FIELD] || "").toString().toLowerCase();
+      const isCompletedRow = statusVal === STATUS_COMPLETED_VALUE.toLowerCase();
+      const latLon = toLatLon(row.geometry);
+
+      const line = [
+        attrs[ADDRESS_FIELD] || "",
+        attrs[objectIdField],
+        isCompletedRow ? "Completed" : (attrs[STATUS_FIELD] || "Pending"),
+        attrs[NOTES_FIELD] || "",
+        latLon.lat,
+        latLon.lon
+      ];
+      if (editDateField) {
+        line.push(attrs[editDateField] ? new Date(attrs[editDateField]).toISOString() : "");
+      }
+      lines.push(line.map(csvEscape).join(","));
+    });
+
+    const csvContent = lines.join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "points_export_" + new Date().toISOString().slice(0, 10) + ".csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function renderTable() {
+    const rows = getSortedRows();
 
     const tbody = document.getElementById("tableBody");
     tbody.innerHTML = "";
