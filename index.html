@@ -405,6 +405,7 @@ require([
   const STATUS_COMPLETED_VALUE = "completed";
   const STATUS_OPEN_VALUE = "open";
   const MAX_POINTS_LOADED = 2000; // raise if your layer has more points than this
+  const USA_EXTENT = { xmin: -125, ymin: 24, xmax: -66, ymax: 49, spatialReference: { wkid: 4326 } };
   // ========================================================================
 
   const oauthInfo = new OAuthInfo({ appId: CLIENT_ID, portalUrl: PORTAL_URL, popup: false });
@@ -502,10 +503,13 @@ require([
       pointsLayer.labelsVisible = true;
 
       const map = new Map({ basemap: "hybrid", layers: [pointsLayer] }); // "hybrid" = Imagery Hybrid
-      view = new MapView({ container: "viewDiv", map: map, zoom: 12 });
+      view = new MapView({
+        container: "viewDiv",
+        map: map,
+        extent: USA_EXTENT // default view: the continental USA, rather than zooming to the points
+      });
 
       view.when(function () {
-        view.goTo(pointsLayer.fullExtent).catch(function () {});
         view.whenLayerView(pointsLayer).then(function (lv) {
           layerView = lv;
           loadAllFeatures();
