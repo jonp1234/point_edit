@@ -294,10 +294,10 @@
     <div id="main">
       <div id="listPane">
         <div id="listHeader">
-          <input id="searchBox" type="text" placeholder="Search by ID or notes..." />
+          <input id="searchBox" type="text" placeholder="Search by address, ID, or notes..." />
           <button id="addPointBtn" type="button">+ Add point</button>
           <div id="filterTabs">
-            <div class="filterTab active" data-filter="pending">Open</div>
+            <div class="filterTab active" data-filter="pending">Pending</div>
             <div class="filterTab" data-filter="completed">Completed</div>
             <div class="filterTab" data-filter="all">All</div>
           </div>
@@ -317,6 +317,11 @@
         </div>
 
         <div class="detailRow">
+          <div class="detailLabel">Address</div>
+          <div class="detailValue" id="detailAddress">-</div>
+        </div>
+
+        <div class="detailRow">
           <div class="detailLabel">ID</div>
           <div class="detailValue" id="detailId">-</div>
         </div>
@@ -324,7 +329,7 @@
         <div class="detailRow">
           <div class="detailLabel">Status</div>
           <select id="statusSelect">
-            <option value="open">Open</option>
+            <option value="open">Pending</option>
             <option value="completed">Completed</option>
           </select>
         </div>
@@ -384,6 +389,7 @@ require([
   const FEATURE_LAYER_URL = "https://services9.arcgis.com/zEltomHsPUsr6yNG/arcgis/rest/services/Points/FeatureServer/0";
   const STATUS_FIELD = "Status";
   const NOTES_FIELD = "Notes";
+  const ADDRESS_FIELD = "Address";
   const STATUS_COMPLETED_VALUE = "completed";
   const STATUS_OPEN_VALUE = "open";
   const MAX_POINTS_LOADED = 2000; // raise if your layer has more points than this
@@ -497,7 +503,7 @@ require([
   function loadAllFeatures() {
     const query = pointsLayer.createQuery();
     query.where = "1=1";
-    query.outFields = [objectIdField, STATUS_FIELD, NOTES_FIELD];
+    query.outFields = [objectIdField, STATUS_FIELD, NOTES_FIELD, ADDRESS_FIELD];
     query.returnGeometry = true;
     query.num = MAX_POINTS_LOADED;
 
@@ -507,6 +513,7 @@ require([
           id: f.attributes[objectIdField],
           status: f.attributes[STATUS_FIELD],
           notes: f.attributes[NOTES_FIELD],
+          address: f.attributes[ADDRESS_FIELD],
           geometry: f.geometry
         };
       });
@@ -546,7 +553,8 @@ require([
     if (searchTerm) {
       rows = rows.filter(function (r) {
         return String(r.id).toLowerCase().includes(searchTerm) ||
-          (r.notes || "").toLowerCase().includes(searchTerm);
+          (r.notes || "").toLowerCase().includes(searchTerm) ||
+          (r.address || "").toLowerCase().includes(searchTerm);
       });
     }
 
@@ -573,10 +581,10 @@ require([
       text.className = "rowText";
       const title = document.createElement("div");
       title.className = "rowTitle";
-      title.textContent = "Point " + r.id;
+      title.textContent = r.address || ("Point " + r.id);
       const sub = document.createElement("div");
       sub.className = "rowSub";
-      sub.textContent = isCompleted(r.status) ? "Completed" : "Open";
+      sub.textContent = "ID " + r.id + " · " + (isCompleted(r.status) ? "Completed" : "Pending");
       text.appendChild(title);
       text.appendChild(sub);
 
@@ -602,7 +610,18 @@ require([
     editingLocation = false;
     isDraggingPoint = false;
 
+    // Zoom in on the point first and independently of everything below, so
+    // a problem with the move-graphic setup can never prevent the zoom.
+    if (row.geometry) {
+      view.goTo({ target: row.geometry, zoom: 17 }, { duration: 500 }).catch(function (err) {
+        if (!err || err.name !== "AbortError") console.error("Zoom to point failed:", err);
+      });
+    } else {
+      console.warn("Point " + id + " has no geometry to zoom to.");
+    }
+
     document.getElementById("detailsTitle").textContent = "Point details";
+    document.getElementById("detailAddress").textContent = row.address || "-";
     document.getElementById("detailId").textContent = id;
     document.getElementById("statusSelect").value = isCompleted(row.status) ? "completed" : "open";
     document.getElementById("notesField").value = row.notes || "";
@@ -618,22 +637,27 @@ require([
     renderList();
 
     // Hide the real feature and show a graphic we can move around freely.
-    layerView.featureEffect = new FeatureEffect({
-      filter: new FeatureFilter({ where: objectIdField + " <> " + id }),
-      excludedEffect: "opacity(0%)"
-    });
-    if (tempGraphic) view.graphics.remove(tempGraphic);
-    tempGraphic = new Graphic({
-      geometry: row.geometry,
-      symbol: {
-        type: "simple-marker",
-        color: isCompleted(row.status) ? "#2e8540" : "#c0392b",
-        size: 12,
-        outline: { color: "white", width: 2 }
-      }
-    });
-    view.graphics.add(tempGraphic);
-    view.goTo({ target: row.geometry, zoom: 17 }, { duration: 500 }).catch(function () {});
+    // Wrapped in try/catch so a problem here (e.g. layer view not ready)
+    // never blocks the zoom or the details panel above.
+    try {
+      layerView.featureEffect = new FeatureEffect({
+        filter: new FeatureFilter({ where: objectIdField + " <> " + id }),
+        excludedEffect: "opacity(0%)"
+      });
+      if (tempGraphic) view.graphics.remove(tempGraphic);
+      tempGraphic = new Graphic({
+        geometry: row.geometry,
+        symbol: {
+          type: "simple-marker",
+          color: isCompleted(row.status) ? "#2e8540" : "#c0392b",
+          size: 12,
+          outline: { color: "white", width: 2 }
+        }
+      });
+      view.graphics.add(tempGraphic);
+    } catch (err) {
+      console.error("Could not set up the movable point graphic:", err);
+    }
   }
 
   function deselect() {
