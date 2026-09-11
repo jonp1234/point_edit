@@ -373,13 +373,12 @@ require([
   "esri/layers/support/FeatureEffect",
   "esri/layers/support/FeatureFilter",
   "esri/renderers/UniqueValueRenderer",
-  "esri/geometry/geometryEngine",
   "esri/geometry/support/webMercatorUtils",
   "esri/widgets/BasemapGallery",
   "esri/widgets/Expand"
 ], function (
   esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, Graphic,
-  FeatureEffect, FeatureFilter, UniqueValueRenderer, geometryEngine, webMercatorUtils,
+  FeatureEffect, FeatureFilter, UniqueValueRenderer, webMercatorUtils,
   BasemapGallery, Expand
 ) {
 
@@ -689,20 +688,38 @@ require([
   document.getElementById("closeDetailsBtn").addEventListener("click", deselect);
   document.getElementById("cancelBtn").addEventListener("click", deselect);
 
+  function toGeographic(geometry) {
+    return geometry.spatialReference && geometry.spatialReference.isWebMercator
+      ? webMercatorUtils.webMercatorToGeographic(geometry)
+      : geometry;
+  }
+
+  // Haversine great-circle distance in meters. Used instead of
+  // geometryEngine.geodesicDistance, which isn't available as a function
+  // on the sync geometryEngine module in this API build/version.
+  function haversineMeters(geomA, geomB) {
+    const a = toGeographic(geomA), b = toGeographic(geomB);
+    const R = 6371000;
+    const lat1 = a.y * Math.PI / 180, lat2 = b.y * Math.PI / 180;
+    const dLat = (b.y - a.y) * Math.PI / 180;
+    const dLon = (b.x - a.x) * Math.PI / 180;
+    const sinA = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * (2 * Math.atan2(Math.sqrt(sinA), Math.sqrt(1 - sinA)));
+  }
+
   function updateLocationReadout(geometry) {
     if (!geometry) {
       document.getElementById("detailLocation").textContent = "Not set";
       document.getElementById("distanceRow").style.display = "none";
       return;
     }
-    const geo = geometry.spatialReference && geometry.spatialReference.isWebMercator
-      ? webMercatorUtils.webMercatorToGeographic(geometry)
-      : geometry;
+    const geo = toGeographic(geometry);
     document.getElementById("detailLocation").textContent =
       geo.y.toFixed(6) + ", " + geo.x.toFixed(6);
 
     if (editingLocation && selectedOriginalGeometry) {
-      const dist = geometryEngine.geodesicDistance(selectedOriginalGeometry, geometry, "meters");
+      const dist = haversineMeters(selectedOriginalGeometry, geometry);
       document.getElementById("distanceRow").style.display = dist > 0.1 ? "block" : "none";
       document.getElementById("detailDistance").textContent = dist.toFixed(1) + " m";
     }
