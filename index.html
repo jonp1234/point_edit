@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>Point Editor</title>
+
+<!--
+  =========================================================================
+  ArcGIS Online Point Editing Tool
+  -------------------------------------------------------------------------
+  Lets a signed-in user:
+    - click a point on the map to select it
+    - drag it to a new location to move it
+    - set its "Status" field (a one-click "Mark Completed" shortcut, or the
+      full edit form)
+    - edit its "Notes" field
+    - save changes back to the hosted feature layer
+
+  Built on Esri's own Editor widget (esri/widgets/Editor), which is the
+  officially supported way to do interactive point move + attribute
+  editing in the ArcGIS Maps SDK for JavaScript — it handles dragging a
+  point's geometry and the attribute form for you.
+
+  SETUP — the only thing you need to change is CONFIG below:
+    1. CLIENT_ID: the OAuth 2.0 Client ID from registering an application
+       in ArcGIS Online (see the setup instructions you were given
+       alongside this file).
+    Everything else (layer URL, field names, "completed" value) is already
+    filled in for your Points layer.
+  =========================================================================
+-->
+
+<link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css" />
+<script src="https://js.arcgis.com/4.29/"></script>
+
+<style>
+  html, body, #viewDiv {
+    padding: 0;
+    margin: 0;
+    height: 100%;
+    width: 100%;
+    font-family: "Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  #signInOverlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(255,255,255,0.97);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 14px;
+  }
+  #signInOverlay h1 { font-size: 18px; margin: 0; color: #323232; }
+  #signInBtn {
+    background: #0079c1;
+    color: #fff;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  #signInBtn:hover { background: #00548a; }
+  #signInError { color: #c0392b; font-size: 13px; max-width: 360px; text-align: center; }
+
+  #topBar {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    z-index: 50;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    pointer-events: none;
+  }
+  #instructions {
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #444;
+    pointer-events: auto;
+    max-width: 320px;
+  }
+  #userBar {
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #444;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    pointer-events: auto;
+  }
+  #signOutBtn {
+    background: none;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+
+  #quickCompleteBar {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+    padding: 10px 14px;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+  #quickCompleteBtn {
+    background: #2e8540;
+    color: #fff;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  #quickCompleteBtn:hover { background: #206b30; }
+  #quickCompleteBtn:disabled { background: #9bc9a6; cursor: default; }
+  #quickCompleteMsg { font-size: 12px; }
+  #quickCompleteMsg.ok { color: #2e8540; }
+  #quickCompleteMsg.error { color: #c0392b; }
+</style>
+</head>
+
+<body>
+  <div id="signInOverlay">
+    <h1>Sign in to edit points</h1>
+    <button id="signInBtn">Sign in with ArcGIS Online</button>
+    <div id="signInError"></div>
+  </div>
+
+  <div id="topBar">
+    <div id="instructions">Click a point, then choose <strong>Update</strong> to edit its Status/Notes or drag it to a new location.</div>
+    <div id="userBar" style="display:none;">
+      <span id="userLabel"></span>
+      <button id="signOutBtn">Sign out</button>
+    </div>
+  </div>
+
+  <div id="quickCompleteBar">
+    <span>Selected point:</span>
+    <button id="quickCompleteBtn" type="button">Mark Completed</button>
+    <span id="quickCompleteMsg"></span>
+  </div>
+
+  <div id="viewDiv"></div>
+
+<script>
+require([
+  "esri/identity/IdentityManager",
+  "esri/identity/OAuthInfo",
+  "esri/portal/Portal",
+  "esri/Map",
+  "esri/views/MapView",
+  "esri/layers/FeatureLayer",
+  "esri/widgets/Editor"
+], function (esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, Editor) {
+
+  // =========================== CONFIG ===================================
+  const CLIENT_ID = "REPLACE_WITH_YOUR_CLIENT_ID";
+  const PORTAL_URL = "https://www.arcgis.com"; // change if this is an ArcGIS Enterprise portal
+  const FEATURE_LAYER_URL = "https://services9.arcgis.com/zEltomHsPUsr6yNG/arcgis/rest/services/Points/FeatureServer/0";
+  const STATUS_FIELD = "Status";
+  const NOTES_FIELD = "Notes";
+  const STATUS_COMPLETED_VALUE = "completed";
+  // ========================================================================
+
+  const oauthInfo = new OAuthInfo({
+    appId: CLIENT_ID,
+    portalUrl: PORTAL_URL,
+    popup: false
+  });
+  esriId.registerOAuthInfos([oauthInfo]);
+
+  let view, pointsLayer, selectedGraphic;
+
+  function showApp() {
+    document.getElementById("signInOverlay").style.display = "none";
+    document.getElementById("userBar").style.display = "flex";
+    initMap();
+  }
+
+  function showSignIn(errorMsg) {
+    document.getElementById("signInOverlay").style.display = "flex";
+    document.getElementById("userBar").style.display = "none";
+    document.getElementById("signInError").textContent = errorMsg || "";
+  }
+
+  document.getElementById("signInBtn").addEventListener("click", function () {
+    if (CLIENT_ID === "REPLACE_WITH_YOUR_CLIENT_ID") {
+      document.getElementById("signInError").textContent =
+        "This page hasn't been configured with a Client ID yet. Edit CLIENT_ID near the top of the <script> in this file.";
+      return;
+    }
+    esriId.getCredential(PORTAL_URL + "/sharing", { oAuthPopupConfirmation: false })
+      .then(onSignedIn)
+      .catch(function (err) {
+        showSignIn("Sign-in failed: " + (err && err.message ? err.message : err));
+      });
+  });
+
+  document.getElementById("signOutBtn").addEventListener("click", function () {
+    esriId.destroyCredentials();
+    window.location.reload();
+  });
+
+  function onSignedIn() {
+    const portal = new Portal({ url: PORTAL_URL, authMode: "immediate" });
+    portal.load().then(function () {
+      document.getElementById("userLabel").textContent = portal.user ? portal.user.username : "Signed in";
+      showApp();
+    });
+  }
+
+  // Pick up an existing session, including returning from the OAuth redirect
+  esriId.checkSignInStatus(PORTAL_URL + "/sharing")
+    .then(onSignedIn)
+    .catch(function () {
+      showSignIn();
+    });
+
+  function initMap() {
+    if (view) return; // already initialized
+
+    pointsLayer = new FeatureLayer({
+      url: FEATURE_LAYER_URL,
+      outFields: ["*"]
+    });
+
+    const map = new Map({
+      basemap: "streets-navigation-vector",
+      layers: [pointsLayer]
+    });
+
+    view = new MapView({
+      container: "viewDiv",
+      map: map,
+      zoom: 12
+    });
+
+    // The Editor widget provides the official, supported UI for both
+    // updating a point's geometry (drag it on the map) and editing its
+    // attributes (a form). We restrict the form to just Status + Notes.
+    const editor = new Editor({
+      view: view,
+      layerInfos: [{
+        layer: pointsLayer,
+        addEnabled: false,
+        deleteEnabled: false,
+        updateEnabled: true,
+        formTemplate: {
+          elements: [
+            { type: "field", fieldName: STATUS_FIELD, label: "Status" },
+            { type: "field", fieldName: NOTES_FIELD, label: "Notes" }
+          ]
+        }
+      }]
+    });
+    view.ui.add(editor, "top-right");
+
+    view.when(function () {
+      view.goTo(pointsLayer.fullExtent).catch(function () {});
+    });
+
+    // Quick "Mark Completed" shortcut: click a point to select it, then
+    // one click sets Status without opening the full edit form.
+    view.on("click", function (event) {
+      view.hitTest(event).then(function (response) {
+        const hit = response.results.find(function (r) {
+          return r.graphic && r.graphic.layer === pointsLayer;
+        });
+        if (hit) {
+          selectedGraphic = hit.graphic;
+          document.getElementById("quickCompleteBar").style.display = "flex";
+          document.getElementById("quickCompleteMsg").textContent = "";
+          document.getElementById("quickCompleteMsg").className = "";
+        } else {
+          selectedGraphic = null;
+          document.getElementById("quickCompleteBar").style.display = "none";
+        }
+      });
+    });
+
+    document.getElementById("quickCompleteBtn").addEventListener("click", function () {
+      if (!selectedGraphic) return;
+      const objectIdField = pointsLayer.objectIdField;
+      const updateAttrs = {};
+      updateAttrs[objectIdField] = selectedGraphic.attributes[objectIdField];
+      updateAttrs[STATUS_FIELD] = STATUS_COMPLETED_VALUE;
+
+      const btn = document.getElementById("quickCompleteBtn");
+      const msgEl = document.getElementById("quickCompleteMsg");
+      btn.disabled = true;
+      msgEl.className = "";
+      msgEl.textContent = "Saving...";
+
+      pointsLayer.applyEdits({
+        updateFeatures: [{ attributes: updateAttrs }]
+      }).then(function (result) {
+        btn.disabled = false;
+        const updateResult = result.updateFeatureResults && result.updateFeatureResults[0];
+        if (updateResult && updateResult.error) {
+          msgEl.className = "error";
+          msgEl.textContent = "Failed: " + updateResult.error.message;
+          return;
+        }
+        msgEl.className = "ok";
+        msgEl.textContent = "Marked completed.";
+        pointsLayer.refresh();
+      }).catch(function (err) {
+        btn.disabled = false;
+        msgEl.className = "error";
+        msgEl.textContent = "Failed: " + (err && err.message ? err.message : err);
+      });
+    });
+  }
+});
+</script>
+</body>
+</html>
