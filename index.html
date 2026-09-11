@@ -3,26 +3,26 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>Points Dashboard</title>
+<title>Point Review</title>
 
 <!--
   =========================================================================
-  Live status dashboard for the Points feature layer (read-only).
+  ArcGIS Online Point Editing Tool — list / map / details layout
   -------------------------------------------------------------------------
-  Shows:
-    - status counts (completed vs. open)
-    - a sortable table of every point (Status, Notes, last edited)
-    - a "recent activity" list of the most recently edited points
-      (requires editor tracking / EditDate to be enabled on the layer —
-      the page detects this automatically and shows a note if it isn't)
-    - a small read-only map colored by status
+  Left panel:   searchable, filterable list of every point (Pending vs
+                Completed), click one to select it.
+  Center:       map, colored by status, showing the selected point.
+  Right panel:  details for the selected point — Status, Notes, a
+                "Mark as Completed" shortcut, and "Edit Location" to drag
+                the point to a new spot (shows live distance moved).
+                Also used to add a brand new point ("+ Add point").
 
-  Auto-refreshes every 30 seconds, plus a manual Refresh button.
-
-  SETUP — same as point-editor.html:
-    1. CLIENT_ID: your OAuth 2.0 Client ID (can be the same application
-       you registered for the editor, as long as this page's URL is also
-       added to that application's redirect URIs).
+  SETUP — the only thing you need to change is CONFIG below:
+    1. CLIENT_ID: the OAuth 2.0 Client ID from registering an application
+       in ArcGIS Online (see the setup instructions you were given
+       alongside this file).
+    Everything else (layer URL, field names, "completed" value) is already
+    filled in for your Points layer.
   =========================================================================
 -->
 
@@ -32,10 +32,11 @@
 <style>
   * { box-sizing: border-box; }
   html, body {
-    margin: 0;
     padding: 0;
+    margin: 0;
+    height: 100%;
+    width: 100%;
     font-family: "Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif;
-    background: #f4f6f8;
     color: #222;
   }
 
@@ -43,14 +44,14 @@
     position: fixed;
     inset: 0;
     background: rgba(255,255,255,0.97);
-    z-index: 100;
+    z-index: 200;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-direction: column;
     gap: 14px;
   }
-  #signInOverlay h1 { font-size: 18px; margin: 0; }
+  #signInOverlay h1 { font-size: 18px; margin: 0; color: #323232; }
   #signInBtn {
     background: #0079c1;
     color: #fff;
@@ -63,151 +64,310 @@
   #signInBtn:hover { background: #00548a; }
   #signInError { color: #c0392b; font-size: 13px; max-width: 360px; text-align: center; }
 
-  #app { display: none; max-width: 1500px; margin: 0 auto; padding: 20px; }
+  #app {
+    display: none;
+    height: 100%;
+    width: 100%;
+    flex-direction: column;
+  }
 
-  header {
+  /* ---------- header ---------- */
+  #header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 18px;
-  }
-  header h1 { font-size: 20px; margin: 0; }
-  #headerRight { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #555; }
-  #editorLink { color: #0079c1; text-decoration: none; font-weight: 600; }
-  #editorLink:hover { text-decoration: underline; }
-  #refreshBtn {
-    background: #fff;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    padding: 6px 12px;
-    cursor: pointer;
-    font-size: 13px;
-  }
-  #signOutBtn {
-    background: none;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    padding: 6px 12px;
-    cursor: pointer;
-    font-size: 13px;
-  }
-
-  #statCards {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 14px;
-    margin-bottom: 20px;
-  }
-  .card {
-    background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
-    padding: 16px;
-  }
-  .card .num { font-size: 30px; font-weight: 700; line-height: 1.1; }
-  .card .label { font-size: 12px; color: #666; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
-  .card.completed .num { color: #2e8540; }
-  .card.open .num { color: #c0392b; }
-  .card.total .num { color: #0079c1; }
-
-  #mapPanel { position: relative; }
-
-  #mainGrid {
-    display: grid;
-    grid-template-columns: 1.3fr 1fr;
     gap: 16px;
-  }
-  @media (max-width: 900px) {
-    #mainGrid { grid-template-columns: 1fr; }
-  }
-
-  .panel {
+    padding: 10px 16px;
     background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
-    padding: 16px;
-    margin-bottom: 16px;
+    border-bottom: 1px solid #e2e2e2;
+    flex: 0 0 auto;
   }
-  .panel h2 { font-size: 14px; margin: 0 0 12px 0; color: #333; }
+  #header h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+  #progressWrap { flex: 1; min-width: 120px; max-width: 320px; }
+  #progressLabel { font-size: 11px; color: #777; margin-bottom: 3px; }
+  #progressBar { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; }
+  #progressFill { height: 100%; background: #2e8540; width: 0%; transition: width 0.3s; }
+  #headerRight { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 13px; color: #555; }
+  #dashboardLink { color: #0079c1; text-decoration: none; font-weight: 600; }
+  #dashboardLink:hover { text-decoration: underline; }
+  #signOutBtn {
+    background: none; border: 1px solid #ccc; border-radius: 4px;
+    padding: 5px 10px; cursor: pointer; font-size: 12px;
+  }
 
-  #mapDiv { height: 520px; border-radius: 6px; overflow: hidden; }
+  /* ---------- main 3-pane layout ---------- */
+  #main { flex: 1 1 auto; display: flex; min-height: 0; }
 
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #eee; }
-  th { cursor: pointer; color: #444; user-select: none; white-space: nowrap; }
-  th:hover { color: #0079c1; }
-  tbody tr { cursor: pointer; }
-  tbody tr:hover { background: #f5f9fc; }
-  td.notes { color: #555; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-  .badge.completed { background: #e3f4e8; color: #206b30; }
-  .badge.open { background: #fbe0dd; color: #a12a20; }
+  #listPane {
+    width: 300px;
+    flex: 0 0 300px;
+    border-right: 1px solid #e2e2e2;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    min-height: 0;
+  }
+  #listHeader { padding: 12px; border-bottom: 1px solid #eee; }
+  #searchBox {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 13px;
+    margin-bottom: 10px;
+  }
+  #addPointBtn {
+    width: 100%;
+    padding: 8px 0;
+    background: #0079c1;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    margin-bottom: 10px;
+  }
+  #addPointBtn:hover { background: #00548a; }
+  #addPointBtn.active { background: #c0392b; }
+  #filterTabs { display: flex; gap: 6px; }
+  .filterTab {
+    flex: 1;
+    padding: 6px 0;
+    text-align: center;
+    font-size: 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #f7f7f7;
+    cursor: pointer;
+    color: #444;
+  }
+  .filterTab.active { background: #0079c1; color: #fff; border-color: #0079c1; }
 
-  #tableWrap { max-height: 420px; overflow-y: auto; }
+  #pointList { flex: 1; overflow-y: auto; }
+  .pointRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #f0f0f0;
+    cursor: pointer;
+  }
+  .pointRow:hover { background: #f5f9fc; }
+  .pointRow.selected { background: #e7f2fa; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+  .dot.pending { background: #c0392b; }
+  .dot.completed { background: #2e8540; }
+  .rowText { min-width: 0; flex: 1; }
+  .rowTitle { font-size: 13px; font-weight: 600; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rowSub { font-size: 11px; color: #888; }
+  #listEmpty { padding: 20px; text-align: center; color: #999; font-size: 13px; }
 
-  #recentList { list-style: none; margin: 0; padding: 0; font-size: 13px; }
-  #recentList li { padding: 8px 0; border-bottom: 1px solid #eee; }
-  #recentList li:last-child { border-bottom: none; }
-  #recentNote { font-size: 12px; color: #888; }
+  /* ---------- map ---------- */
+  #mapPane { flex: 1 1 auto; position: relative; min-width: 0; }
+  #viewDiv { position: absolute; inset: 0; }
+  #mapHint {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 10;
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    padding: 7px 12px;
+    font-size: 12px;
+    color: #444;
+    max-width: 320px;
+    display: none;
+  }
 
-  #tableError, #recentError { font-size: 12px; color: #c0392b; }
+  /* ---------- details pane ---------- */
+  #detailsPane {
+    width: 320px;
+    flex: 0 0 320px;
+    border-left: 1px solid #e2e2e2;
+    background: #fff;
+    padding: 16px;
+    overflow-y: auto;
+    display: none;
+    flex-direction: column;
+  }
+  #detailsHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  #detailsHeader h2 { font-size: 15px; margin: 0; }
+  #closeDetailsBtn { background: none; border: none; font-size: 18px; cursor: pointer; color: #888; line-height: 1; }
+  #closeDetailsBtn:hover { color: #333; }
+
+  .detailRow { margin-bottom: 14px; }
+  .detailLabel { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 4px; }
+  .detailValue { font-size: 13px; color: #333; }
+  .detailInput {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 13px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-family: inherit;
+  }
+  .statusBadge { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+  .statusBadge.pending { background: #fbe0dd; color: #a12a20; }
+  .statusBadge.completed { background: #e3f4e8; color: #206b30; }
+
+  #statusSelect {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 13px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+  }
+  #notesField {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 80px;
+    padding: 7px 9px;
+    font-size: 13px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    resize: vertical;
+    font-family: inherit;
+  }
+
+  #editLocationBtn {
+    width: 100%;
+    padding: 8px 0;
+    border-radius: 4px;
+    border: 1px solid #0079c1;
+    background: #fff;
+    color: #0079c1;
+    cursor: pointer;
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+  #editLocationBtn.active { background: #0079c1; color: #fff; }
+
+  #markCompleteBtn {
+    width: 100%;
+    padding: 9px 0;
+    border-radius: 4px;
+    border: none;
+    background: #2e8540;
+    color: #fff;
+    cursor: pointer;
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+  #markCompleteBtn:hover { background: #206b30; }
+  #markCompleteBtn:disabled { background: #9bc9a6; cursor: default; }
+
+  #detailsButtons { display: flex; gap: 8px; margin-top: 8px; }
+  #saveBtn, #cancelBtn {
+    flex: 1;
+    padding: 9px 0;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  #saveBtn { background: #0079c1; color: #fff; }
+  #saveBtn:hover { background: #00548a; }
+  #saveBtn:disabled { background: #9bbfd3; cursor: default; }
+  #cancelBtn { background: #eee; color: #333; }
+
+  #detailsMsg { font-size: 12px; margin-top: 10px; min-height: 16px; }
+  #detailsMsg.error { color: #c0392b; }
+  #detailsMsg.ok { color: #2e8540; }
+
+  @media (max-width: 900px) {
+    #listPane { width: 220px; flex-basis: 220px; }
+    #detailsPane { width: 260px; flex-basis: 260px; }
+  }
 </style>
 </head>
 
 <body>
   <div id="signInOverlay">
-    <h1>Sign in to view the dashboard</h1>
+    <h1>Sign in to review points</h1>
     <button id="signInBtn">Sign in with ArcGIS Online</button>
     <div id="signInError"></div>
   </div>
 
   <div id="app">
-    <header>
-      <h1>Points Dashboard</h1>
+    <div id="header">
+      <h1>Point Review</h1>
+      <div id="progressWrap">
+        <div id="progressLabel">0 of 0 completed</div>
+        <div id="progressBar"><div id="progressFill"></div></div>
+      </div>
       <div id="headerRight">
-        <a id="editorLink" href="https://jonp1234.github.io/point_edit/" target="_blank" rel="noopener">Editor</a>
-        <span id="lastUpdated"></span>
-        <button id="refreshBtn">Refresh</button>
+        <a id="dashboardLink" href="https://jonp1234.github.io/point_edit/dashboard.html" target="_blank" rel="noopener">Dashboard</a>
         <span id="userLabel"></span>
         <button id="signOutBtn">Sign out</button>
       </div>
-    </header>
-
-    <div id="statCards">
-      <div class="card completed"><div class="num" id="countCompleted">-</div><div class="label">Completed</div></div>
-      <div class="card open"><div class="num" id="countOpen">-</div><div class="label">Pending</div></div>
-      <div class="card total"><div class="num" id="countTotal">-</div><div class="label">Total points</div></div>
     </div>
 
-    <div class="panel" id="mapPanel">
-      <h2>Map</h2>
-      <div id="mapDiv"></div>
-    </div>
-
-    <div id="mainGrid">
-      <div class="panel">
-        <h2>All points</h2>
-        <div id="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th data-key="Address">Address</th>
-                <th data-key="OBJECTID">ID</th>
-                <th data-key="Status">Status</th>
-                <th data-key="Notes">Notes</th>
-                <th data-key="EditDate">Last edited</th>
-              </tr>
-            </thead>
-            <tbody id="tableBody"></tbody>
-          </table>
+    <div id="main">
+      <div id="listPane">
+        <div id="listHeader">
+          <input id="searchBox" type="text" placeholder="Search by address, ID, or notes..." />
+          <button id="addPointBtn" type="button">+ Add point</button>
+          <div id="filterTabs">
+            <div class="filterTab" data-filter="pending">Pending</div>
+            <div class="filterTab" data-filter="completed">Completed</div>
+            <div class="filterTab active" data-filter="all">All</div>
+          </div>
         </div>
-        <div id="tableError"></div>
+        <div id="pointList"></div>
       </div>
-      <div class="panel">
-        <h2>Recent activity</h2>
-        <ul id="recentList"></ul>
-        <div id="recentNote"></div>
-        <div id="recentError"></div>
+
+      <div id="mapPane">
+        <div id="mapHint">Click the map to place the new point.</div>
+        <div id="viewDiv"></div>
+      </div>
+
+      <div id="detailsPane">
+        <div id="detailsHeader">
+          <h2 id="detailsTitle">Point details</h2>
+          <button id="closeDetailsBtn" type="button">&times;</button>
+        </div>
+
+        <div class="detailRow">
+          <div class="detailLabel">Address</div>
+          <input type="text" id="detailAddress" class="detailInput" placeholder="Enter address..." />
+        </div>
+
+        <div class="detailRow">
+          <div class="detailLabel">ID</div>
+          <div class="detailValue" id="detailId">-</div>
+        </div>
+
+        <div class="detailRow">
+          <div class="detailLabel">Status</div>
+          <select id="statusSelect">
+            <option value="open">Pending</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+
+        <div class="detailRow">
+          <div class="detailLabel">Notes</div>
+          <textarea id="notesField" placeholder="Add notes..."></textarea>
+        </div>
+
+        <div class="detailRow">
+          <div class="detailLabel">Current location</div>
+          <div class="detailValue" id="detailLocation">-</div>
+        </div>
+
+        <div class="detailRow" id="distanceRow" style="display:none;">
+          <div class="detailLabel">Distance moved</div>
+          <div class="detailValue" id="detailDistance">-</div>
+        </div>
+
+        <button id="editLocationBtn" type="button">Edit Location</button>
+        <button id="markCompleteBtn" type="button">Mark as Completed</button>
+
+        <div id="detailsButtons">
+          <button id="cancelBtn" type="button">Cancel</button>
+          <button id="saveBtn" type="button">Save</button>
+        </div>
+        <div id="detailsMsg"></div>
       </div>
     </div>
   </div>
@@ -220,11 +380,20 @@ require([
   "esri/Map",
   "esri/views/MapView",
   "esri/layers/FeatureLayer",
+  "esri/Graphic",
+  "esri/layers/support/FeatureEffect",
+  "esri/layers/support/FeatureFilter",
   "esri/renderers/UniqueValueRenderer",
   "esri/layers/support/LabelClass",
+  "esri/geometry/support/webMercatorUtils",
+  "esri/geometry/Polygon",
   "esri/widgets/BasemapGallery",
   "esri/widgets/Expand"
-], function (esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, UniqueValueRenderer, LabelClass, BasemapGallery, Expand) {
+], function (
+  esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, Graphic,
+  FeatureEffect, FeatureFilter, UniqueValueRenderer, LabelClass, webMercatorUtils, Polygon,
+  BasemapGallery, Expand
+) {
 
   // =========================== CONFIG ===================================
   const CLIENT_ID = "Y4nNFLiG8tQXFLJU";
@@ -234,33 +403,26 @@ require([
   const NOTES_FIELD = "Notes";
   const ADDRESS_FIELD = "Address";
   const STATUS_COMPLETED_VALUE = "completed";
-  const AUTO_REFRESH_SECONDS = 30;
+  const STATUS_OPEN_VALUE = "open";
+  const MAX_POINTS_LOADED = 2000; // raise if your layer has more points than this
   // ========================================================================
 
-  const oauthInfo = new OAuthInfo({
-    appId: CLIENT_ID,
-    portalUrl: PORTAL_URL,
-    popup: false
-  });
+  const oauthInfo = new OAuthInfo({ appId: CLIENT_ID, portalUrl: PORTAL_URL, popup: false });
   esriId.registerOAuthInfos([oauthInfo]);
 
-  let view, pointsLayer, objectIdField, editDateField = null;
-  let allRows = [];
-  let sortKey = "OBJECTID";
-  let sortDir = 1;
-
+  // ------------------------------------------------------------------
+  // Sign-in
+  // ------------------------------------------------------------------
   function showApp() {
     document.getElementById("signInOverlay").style.display = "none";
-    document.getElementById("app").style.display = "block";
-    initDashboard();
+    document.getElementById("app").style.display = "flex";
+    initMap();
   }
-
   function showSignIn(errorMsg) {
     document.getElementById("signInOverlay").style.display = "flex";
     document.getElementById("app").style.display = "none";
     document.getElementById("signInError").textContent = errorMsg || "";
   }
-
   document.getElementById("signInBtn").addEventListener("click", function () {
     if (CLIENT_ID === "REPLACE_WITH_YOUR_CLIENT_ID") {
       document.getElementById("signInError").textContent =
@@ -269,16 +431,12 @@ require([
     }
     esriId.getCredential(PORTAL_URL + "/sharing", { oAuthPopupConfirmation: false })
       .then(onSignedIn)
-      .catch(function (err) {
-        showSignIn("Sign-in failed: " + (err && err.message ? err.message : err));
-      });
+      .catch(function (err) { showSignIn("Sign-in failed: " + (err && err.message ? err.message : err)); });
   });
-
   document.getElementById("signOutBtn").addEventListener("click", function () {
     esriId.destroyCredentials();
     window.location.reload();
   });
-
   function onSignedIn() {
     const portal = new Portal({ url: PORTAL_URL, authMode: "immediate" });
     portal.load().then(function () {
@@ -286,35 +444,46 @@ require([
       showApp();
     });
   }
+  esriId.checkSignInStatus(PORTAL_URL + "/sharing").then(onSignedIn).catch(function () { showSignIn(); });
 
-  esriId.checkSignInStatus(PORTAL_URL + "/sharing")
-    .then(onSignedIn)
-    .catch(function () {
-      showSignIn();
-    });
+  // ------------------------------------------------------------------
+  // State
+  // ------------------------------------------------------------------
+  let view, pointsLayer, layerView, objectIdField;
+  let allRows = [];              // [{ id, status, notes, geometry }]
+  let currentFilter = "all";
+  let searchTerm = "";
+  let selectedId = null;
+  let selectedOriginalGeometry = null; // geometry when selection began (for distance calc)
+  let tempGraphic = null;              // the movable graphic representing the selected point
+  let originalMarkerGraphic = null;    // marks the pre-edit location while a point is selected
+  let ringGraphic = null;              // 6 meter guide ring around the original location
+  let editingLocation = false;
+  let isDraggingPoint = false;
+  let addingPoint = false;
+  const MOVE_GUIDE_RADIUS_METERS = 6;
 
-  function initDashboard() {
-    if (view) {
-      refreshAll();
-      return;
-    }
+  function isCompleted(status) {
+    return (status || "").toString().toLowerCase() === STATUS_COMPLETED_VALUE.toLowerCase();
+  }
+
+  // ------------------------------------------------------------------
+  // Map init
+  // ------------------------------------------------------------------
+  function initMap() {
+    if (view) { loadAllFeatures(); return; }
 
     pointsLayer = new FeatureLayer({ url: FEATURE_LAYER_URL, outFields: ["*"] });
 
     pointsLayer.load().then(function () {
       objectIdField = pointsLayer.objectIdField;
-      // Detect whether editor tracking (EditDate) is enabled on the layer
-      const editInfo = pointsLayer.editFieldsInfo;
-      if (editInfo && editInfo.editDateField) {
-        editDateField = editInfo.editDateField;
-      }
 
       pointsLayer.renderer = new UniqueValueRenderer({
         field: STATUS_FIELD,
-        defaultSymbol: { type: "simple-marker", color: "#e0a800", size: 9, outline: { color: "white", width: 1 } },
+        defaultSymbol: { type: "simple-marker", color: "#c0392b", size: 10, outline: { color: "white", width: 1.5 } },
         uniqueValueInfos: [{
           value: STATUS_COMPLETED_VALUE,
-          symbol: { type: "simple-marker", color: "#2e8540", size: 9, outline: { color: "white", width: 1 } }
+          symbol: { type: "simple-marker", color: "#2e8540", size: 10, outline: { color: "white", width: 1.5 } }
         }]
       });
 
@@ -327,16 +496,26 @@ require([
           haloSize: 1,
           font: { size: 10, family: "Arial", weight: "bold" }
         },
-        labelPlacement: "above-center"
+        labelPlacement: "above-center",
+        deconflictionStrategy: "none" // always show every label, even when points are close together and labels overlap
       })];
       pointsLayer.labelsVisible = true;
 
       const map = new Map({ basemap: "hybrid", layers: [pointsLayer] }); // "hybrid" = Imagery Hybrid
-      view = new MapView({ container: "mapDiv", map: map, zoom: 12, ui: { components: ["zoom"] } });
+      view = new MapView({ container: "viewDiv", map: map, zoom: 12 });
+
       view.when(function () {
         view.goTo(pointsLayer.fullExtent).catch(function () {});
+        view.whenLayerView(pointsLayer).then(function (lv) {
+          layerView = lv;
+          loadAllFeatures();
+        });
       });
 
+      view.on("click", onMapClick);
+      view.on("drag", onMapDrag);
+
+      // Basemap switcher, collapsed into a small expandable button
       const basemapGallery = new BasemapGallery({ view: view });
       const basemapExpand = new Expand({
         view: view,
@@ -344,189 +523,512 @@ require([
         expandTooltip: "Change basemap"
       });
       view.ui.add(basemapExpand, "top-right");
-
-      document.querySelectorAll("th[data-key]").forEach(function (th) {
-        th.addEventListener("click", function () {
-          const key = th.dataset.key;
-          if (key === sortKey) {
-            sortDir *= -1;
-          } else {
-            sortKey = key;
-            sortDir = 1;
-          }
-          renderTable();
-        });
-      });
-
-      document.getElementById("refreshBtn").addEventListener("click", refreshAll);
-
-      refreshAll();
-      setInterval(refreshAll, AUTO_REFRESH_SECONDS * 1000);
-    }).catch(function (err) {
-      document.getElementById("tableError").textContent =
-        "Could not load layer: " + (err && err.message ? err.message : err);
     });
   }
 
-  function refreshAll() {
-    refreshCounts();
-    refreshTable();
-    refreshRecent();
-    document.getElementById("lastUpdated").textContent = "Updated " + new Date().toLocaleTimeString();
-  }
-
-  function refreshCounts() {
-    const completedQuery = pointsLayer.createQuery();
-    completedQuery.where = STATUS_FIELD + " = '" + STATUS_COMPLETED_VALUE + "'";
-
-    const totalQuery = pointsLayer.createQuery();
-    totalQuery.where = "1=1";
-
-    Promise.all([
-      pointsLayer.queryFeatureCount(completedQuery),
-      pointsLayer.queryFeatureCount(totalQuery)
-    ]).then(function (results) {
-      const completed = results[0];
-      const total = results[1];
-      document.getElementById("countCompleted").textContent = completed;
-      document.getElementById("countOpen").textContent = total - completed;
-      document.getElementById("countTotal").textContent = total;
-    }).catch(function (err) {
-      document.getElementById("tableError").textContent =
-        "Could not load counts: " + (err && err.message ? err.message : err);
-    });
-  }
-
-  function refreshTable() {
+  // ------------------------------------------------------------------
+  // Loading / list rendering
+  // ------------------------------------------------------------------
+  function loadAllFeatures() {
     const query = pointsLayer.createQuery();
     query.where = "1=1";
-    const outFields = [objectIdField, STATUS_FIELD, NOTES_FIELD, ADDRESS_FIELD];
-    if (editDateField) outFields.push(editDateField);
-    query.outFields = outFields;
-    query.returnGeometry = true; // needed so a table row can zoom the map to it
-    query.num = 2000;
+    query.outFields = [objectIdField, STATUS_FIELD, NOTES_FIELD, ADDRESS_FIELD];
+    query.returnGeometry = true;
+    query.num = MAX_POINTS_LOADED;
 
-    pointsLayer.queryFeatures(query).then(function (result) {
-      allRows = result.features.map(function (f) { return { attrs: f.attributes, geometry: f.geometry }; });
-      document.getElementById("tableError").textContent = "";
-      renderTable();
-    }).catch(function (err) {
-      document.getElementById("tableError").textContent =
-        "Could not load table: " + (err && err.message ? err.message : err);
+    return pointsLayer.queryFeatures(query).then(function (result) {
+      allRows = result.features.map(function (f) {
+        return {
+          id: f.attributes[objectIdField],
+          status: f.attributes[STATUS_FIELD],
+          notes: f.attributes[NOTES_FIELD],
+          address: f.attributes[ADDRESS_FIELD],
+          geometry: f.geometry
+        };
+      });
+      renderList();
+      updateProgress();
     });
   }
 
-  function renderTable() {
-    const rows = allRows.slice().sort(function (a, b) {
-      const key = sortKey === "EditDate" ? editDateField : sortKey;
-      let av = a.attrs[key], bv = b.attrs[key];
-      if (av == null) av = "";
-      if (bv == null) bv = "";
-      if (av < bv) return -1 * sortDir;
-      if (av > bv) return 1 * sortDir;
-      return 0;
-    });
-
-    const tbody = document.getElementById("tableBody");
-    tbody.innerHTML = "";
-    rows.forEach(function (row) {
-      const attrs = row.attrs;
-      const statusVal = (attrs[STATUS_FIELD] || "").toString().toLowerCase();
-      const isCompleted = statusVal === STATUS_COMPLETED_VALUE.toLowerCase();
-      const tr = document.createElement("tr");
-      tr.title = row.geometry ? "Click to zoom to this point on the map" : "No location stored for this point";
-
-      const addressTd = document.createElement("td");
-      addressTd.textContent = attrs[ADDRESS_FIELD] || "-";
-      tr.appendChild(addressTd);
-
-      const idTd = document.createElement("td");
-      idTd.textContent = attrs[objectIdField];
-      tr.appendChild(idTd);
-
-      const statusTd = document.createElement("td");
-      const badge = document.createElement("span");
-      badge.className = "badge " + (isCompleted ? "completed" : "open");
-      badge.textContent = isCompleted ? "Completed" : (attrs[STATUS_FIELD] || "Pending");
-      statusTd.appendChild(badge);
-      tr.appendChild(statusTd);
-
-      const notesTd = document.createElement("td");
-      notesTd.className = "notes";
-      notesTd.title = attrs[NOTES_FIELD] || "";
-      notesTd.textContent = attrs[NOTES_FIELD] || "";
-      tr.appendChild(notesTd);
-
-      const editTd = document.createElement("td");
-      if (editDateField && attrs[editDateField]) {
-        editTd.textContent = new Date(attrs[editDateField]).toLocaleString();
-      } else {
-        editTd.textContent = "-";
-      }
-      tr.appendChild(editTd);
-
-      if (row.geometry) {
-        tr.addEventListener("click", function () {
-          view.goTo({ target: row.geometry, zoom: 17 }, { duration: 500 }).catch(function (err) {
-            if (!err || err.name !== "AbortError") console.error("Zoom to point failed:", err);
-          });
-        });
-      }
-
-      tbody.appendChild(tr);
-    });
+  function updateProgress() {
+    const total = allRows.length;
+    const completed = allRows.filter(function (r) { return isCompleted(r.status); }).length;
+    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+    document.getElementById("progressLabel").textContent = completed + " of " + total + " completed (" + pct + "%)";
+    document.getElementById("progressFill").style.width = pct + "%";
   }
 
-  function refreshRecent() {
-    const recentNoteEl = document.getElementById("recentNote");
-    const recentListEl = document.getElementById("recentList");
-    const recentErrorEl = document.getElementById("recentError");
+  document.querySelectorAll(".filterTab").forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      document.querySelectorAll(".filterTab").forEach(function (t) { t.classList.remove("active"); });
+      tab.classList.add("active");
+      currentFilter = tab.dataset.filter;
+      renderList();
+    });
+  });
 
-    if (!editDateField) {
-      recentListEl.innerHTML = "";
-      recentNoteEl.textContent =
-        "Recent activity needs editor tracking enabled on this layer (records who/when edited each feature). " +
-        "You can turn this on in the layer's settings in ArcGIS Online (Settings > Editing > Keep track of who created and last updated features).";
+  document.getElementById("searchBox").addEventListener("input", function (e) {
+    searchTerm = e.target.value.trim().toLowerCase();
+    renderList();
+  });
+
+  function renderList() {
+    let rows = allRows.slice();
+
+    if (currentFilter === "pending") rows = rows.filter(function (r) { return !isCompleted(r.status); });
+    else if (currentFilter === "completed") rows = rows.filter(function (r) { return isCompleted(r.status); });
+
+    if (searchTerm) {
+      rows = rows.filter(function (r) {
+        return String(r.id).toLowerCase().includes(searchTerm) ||
+          (r.notes || "").toLowerCase().includes(searchTerm) ||
+          (r.address || "").toLowerCase().includes(searchTerm);
+      });
+    }
+
+    const listEl = document.getElementById("pointList");
+    listEl.innerHTML = "";
+
+    if (rows.length === 0) {
+      const empty = document.createElement("div");
+      empty.id = "listEmpty";
+      empty.textContent = "No points match.";
+      listEl.appendChild(empty);
       return;
     }
-    recentNoteEl.textContent = "";
 
-    const query = pointsLayer.createQuery();
-    query.where = "1=1";
-    query.outFields = [objectIdField, STATUS_FIELD, NOTES_FIELD, ADDRESS_FIELD, editDateField];
-    query.orderByFields = [editDateField + " DESC"];
-    query.num = 8;
-    query.returnGeometry = false;
+    rows.forEach(function (r) {
+      const row = document.createElement("div");
+      row.className = "pointRow" + (r.id === selectedId ? " selected" : "");
+      row.dataset.id = r.id;
 
-    pointsLayer.queryFeatures(query).then(function (result) {
-      recentErrorEl.textContent = "";
-      recentListEl.innerHTML = "";
-      result.features.forEach(function (f) {
-        const attrs = f.attributes;
-        const statusVal = (attrs[STATUS_FIELD] || "").toString().toLowerCase();
-        const isCompleted = statusVal === STATUS_COMPLETED_VALUE.toLowerCase();
-        const li = document.createElement("li");
-        const when = attrs[editDateField] ? new Date(attrs[editDateField]).toLocaleString() : "";
-        const label = attrs[ADDRESS_FIELD] || ("Point " + attrs[objectIdField]);
+      const dot = document.createElement("div");
+      dot.className = "dot " + (isCompleted(r.status) ? "completed" : "pending");
 
-        const strong = document.createElement("strong");
-        strong.textContent = label + " ";
-        const badge = document.createElement("span");
-        badge.className = "badge " + (isCompleted ? "completed" : "open");
-        badge.textContent = isCompleted ? "Completed" : (attrs[STATUS_FIELD] || "Pending");
-        const whenDiv = document.createElement("div");
-        whenDiv.style.cssText = "color:#888;font-size:12px;";
-        whenDiv.textContent = when;
+      const text = document.createElement("div");
+      text.className = "rowText";
+      const title = document.createElement("div");
+      title.className = "rowTitle";
+      title.textContent = r.address || ("Point " + r.id);
+      const sub = document.createElement("div");
+      sub.className = "rowSub";
+      sub.textContent = "ID " + r.id + " · " + (isCompleted(r.status) ? "Completed" : "Pending") +
+        (r.geometry ? "" : " · No location");
+      text.appendChild(title);
+      text.appendChild(sub);
 
-        li.appendChild(strong);
-        li.appendChild(badge);
-        li.appendChild(whenDiv);
-        recentListEl.appendChild(li);
-      });
-    }).catch(function (err) {
-      recentErrorEl.textContent = "Could not load recent activity: " + (err && err.message ? err.message : err);
+      row.appendChild(dot);
+      row.appendChild(text);
+      row.addEventListener("click", function () { selectPoint(r.id); });
+
+      listEl.appendChild(row);
     });
   }
+
+  // ------------------------------------------------------------------
+  // Selection / details panel
+  // ------------------------------------------------------------------
+  function selectPoint(id) {
+    if (addingPoint) cancelAddPoint();
+
+    const row = allRows.find(function (r) { return r.id === id; });
+    if (!row) return;
+
+    selectedId = id;
+    selectedOriginalGeometry = row.geometry;
+    editingLocation = false;
+    isDraggingPoint = false;
+
+    const hasGeometry = !!row.geometry;
+
+    // Zoom in on the point first and independently of everything below, so
+    // a problem with the move-graphic setup can never prevent the zoom.
+    if (hasGeometry) {
+      view.goTo({ target: row.geometry, zoom: 17 }, { duration: 500 }).catch(function (err) {
+        if (!err || err.name !== "AbortError") console.error("Zoom to point failed:", err);
+      });
+    } else {
+      console.warn("Point " + id + " has no location stored yet, so there's nothing to zoom to. " +
+        "Use Edit Location, then click the map to place it.");
+    }
+
+    document.getElementById("detailsTitle").textContent = "Point details";
+    document.getElementById("detailAddress").value = row.address || "";
+    document.getElementById("detailId").textContent = id;
+    document.getElementById("statusSelect").value = isCompleted(row.status) ? "completed" : "open";
+    document.getElementById("notesField").value = row.notes || "";
+    document.getElementById("editLocationBtn").textContent = "Edit Location";
+    document.getElementById("editLocationBtn").classList.remove("active");
+    document.getElementById("distanceRow").style.display = "none";
+    document.getElementById("detailsMsg").textContent = "";
+    document.getElementById("detailsMsg").className = "";
+    updateLocationReadout(row.geometry);
+
+    if (hasGeometry) {
+      document.getElementById("mapHint").style.display = "none";
+    } else {
+      document.getElementById("mapHint").style.display = "block";
+      document.getElementById("mapHint").textContent =
+        "This point has no location saved. Click \"Edit Location\" below, then click the map to place it.";
+    }
+
+    document.getElementById("detailsPane").style.display = "flex";
+    renderList();
+
+    if (tempGraphic) { view.graphics.remove(tempGraphic); tempGraphic = null; }
+    if (originalMarkerGraphic) { view.graphics.remove(originalMarkerGraphic); originalMarkerGraphic = null; }
+    if (ringGraphic) { view.graphics.remove(ringGraphic); ringGraphic = null; }
+
+    if (hasGeometry) {
+      // Hide the real feature and show a graphic we can move around freely.
+      // Wrapped in try/catch so a problem here (e.g. layer view not ready)
+      // never blocks the zoom or the details panel above.
+      try {
+        layerView.featureEffect = new FeatureEffect({
+          filter: new FeatureFilter({ where: objectIdField + " <> " + id }),
+          excludedEffect: "opacity(0%)"
+        });
+        tempGraphic = new Graphic({
+          geometry: row.geometry,
+          symbol: {
+            type: "simple-marker",
+            color: isCompleted(row.status) ? "#2e8540" : "#c0392b",
+            size: 12,
+            outline: { color: "white", width: 2 }
+          }
+        });
+
+        // Guide ring + original-location marker: stay put at the pre-edit
+        // location for the whole time this point is selected, so it's easy
+        // to see how far a drag has moved the point before saving.
+        ringGraphic = buildGuideRingGraphic(row.geometry, MOVE_GUIDE_RADIUS_METERS);
+        originalMarkerGraphic = new Graphic({
+          geometry: row.geometry,
+          symbol: {
+            type: "simple-marker",
+            style: "circle",
+            color: [255, 255, 255, 0.5],
+            size: 14,
+            outline: { color: "#555", width: 2 }
+          }
+        });
+
+        view.graphics.addMany([ringGraphic, originalMarkerGraphic, tempGraphic]);
+      } catch (err) {
+        console.error("Could not set up the movable point graphic:", err);
+      }
+    } else if (layerView) {
+      layerView.featureEffect = null; // nothing to hide/exclude for a point with no geometry
+    }
+  }
+
+  function deselect() {
+    selectedId = null;
+    selectedOriginalGeometry = null;
+    editingLocation = false;
+    document.getElementById("detailsPane").style.display = "none";
+    if (layerView) layerView.featureEffect = null;
+    if (tempGraphic) { view.graphics.remove(tempGraphic); tempGraphic = null; }
+    if (originalMarkerGraphic) { view.graphics.remove(originalMarkerGraphic); originalMarkerGraphic = null; }
+    if (ringGraphic) { view.graphics.remove(ringGraphic); ringGraphic = null; }
+    renderList();
+  }
+
+  document.getElementById("closeDetailsBtn").addEventListener("click", deselect);
+  document.getElementById("cancelBtn").addEventListener("click", deselect);
+
+  function toGeographic(geometry) {
+    return geometry.spatialReference && geometry.spatialReference.isWebMercator
+      ? webMercatorUtils.webMercatorToGeographic(geometry)
+      : geometry;
+  }
+
+  // Haversine great-circle distance in meters. Used instead of
+  // geometryEngine.geodesicDistance, which isn't available as a function
+  // on the sync geometryEngine module in this API build/version.
+  function haversineMeters(geomA, geomB) {
+    const a = toGeographic(geomA), b = toGeographic(geomB);
+    const R = 6371000;
+    const lat1 = a.y * Math.PI / 180, lat2 = b.y * Math.PI / 180;
+    const dLat = (b.y - a.y) * Math.PI / 180;
+    const dLon = (b.x - a.x) * Math.PI / 180;
+    const sinA = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * (2 * Math.atan2(Math.sqrt(sinA), Math.sqrt(1 - sinA)));
+  }
+
+  // Point at a given bearing/distance from a lat/lon (spherical earth), used to trace a guide circle.
+  function destinationPoint(lat, lon, bearingDeg, distanceMeters) {
+    const R = 6371000;
+    const dByR = distanceMeters / R;
+    const bearing = bearingDeg * Math.PI / 180;
+    const lat1 = lat * Math.PI / 180;
+    const lon1 = lon * Math.PI / 180;
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dByR) + Math.cos(lat1) * Math.sin(dByR) * Math.cos(bearing));
+    const lon2 = lon1 + Math.atan2(
+      Math.sin(bearing) * Math.sin(dByR) * Math.cos(lat1),
+      Math.cos(dByR) - Math.sin(lat1) * Math.sin(lat2)
+    );
+    return { lat: lat2 * 180 / Math.PI, lon: lon2 * 180 / Math.PI };
+  }
+
+  // A translucent circle graphic (polygon) of the given radius around a point, used as a
+  // visual guide for how far the point has been dragged from its original location.
+  function buildGuideRingGraphic(centerGeometry, radiusMeters) {
+    const geo = toGeographic(centerGeometry);
+    const numPoints = 64;
+    const ring = [];
+    for (let i = 0; i <= numPoints; i++) {
+      const bearing = (i * 360) / numPoints;
+      const dest = destinationPoint(geo.y, geo.x, bearing, radiusMeters);
+      ring.push([dest.lon, dest.lat]);
+    }
+    return new Graphic({
+      geometry: new Polygon({ rings: [ring], spatialReference: { wkid: 4326 } }),
+      symbol: {
+        type: "simple-fill",
+        color: [0, 121, 193, 0.08],
+        outline: { color: [0, 121, 193, 0.7], width: 1.5 }
+      }
+    });
+  }
+
+  function updateLocationReadout(geometry) {
+    if (!geometry) {
+      document.getElementById("detailLocation").textContent = "Not set";
+      document.getElementById("distanceRow").style.display = "none";
+      return;
+    }
+    const geo = toGeographic(geometry);
+    document.getElementById("detailLocation").textContent =
+      geo.y.toFixed(6) + ", " + geo.x.toFixed(6);
+
+    if (editingLocation && selectedOriginalGeometry) {
+      const dist = haversineMeters(selectedOriginalGeometry, geometry);
+      document.getElementById("distanceRow").style.display = dist > 0.1 ? "block" : "none";
+      document.getElementById("detailDistance").textContent = dist.toFixed(1) + " m";
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Edit Location (drag to move)
+  // ------------------------------------------------------------------
+  document.getElementById("editLocationBtn").addEventListener("click", function () {
+    if (!selectedId) return;
+    editingLocation = !editingLocation;
+    const btn = document.getElementById("editLocationBtn");
+    const hasPlacedGeometry = tempGraphic && tempGraphic.geometry;
+    if (editingLocation) {
+      btn.textContent = "Done Moving";
+      btn.classList.add("active");
+      document.getElementById("mapHint").style.display = "block";
+      document.getElementById("mapHint").textContent = hasPlacedGeometry
+        ? "Drag the point on the map to reposition it."
+        : "Click the map to place this point.";
+    } else {
+      btn.textContent = "Edit Location";
+      btn.classList.remove("active");
+      document.getElementById("mapHint").style.display = "none";
+    }
+  });
+
+  function onMapDrag(event) {
+    if (!editingLocation || !tempGraphic || !tempGraphic.geometry) return;
+    if (event.action === "start") {
+      const screenPt = view.toScreen(tempGraphic.geometry);
+      const dx = event.x - screenPt.x, dy = event.y - screenPt.y;
+      if (Math.sqrt(dx * dx + dy * dy) <= 18) {
+        isDraggingPoint = true;
+        event.stopPropagation();
+      }
+    } else if (event.action === "update" && isDraggingPoint) {
+      event.stopPropagation();
+      const mapPoint = view.toMap({ x: event.x, y: event.y });
+      tempGraphic.geometry = mapPoint;
+      updateLocationReadout(mapPoint);
+    } else if (event.action === "end") {
+      if (isDraggingPoint) event.stopPropagation();
+      isDraggingPoint = false;
+    }
+  }
+
+  function onMapClick(event) {
+    if (addingPoint) {
+      const mapPoint = view.toMap({ x: event.x, y: event.y });
+      finishAddPoint(mapPoint);
+      return;
+    }
+
+    // Selected point has no location yet and we're in Edit Location mode:
+    // treat this click as placing it, rather than dragging an existing point.
+    if (selectedId && editingLocation && (!tempGraphic || !tempGraphic.geometry)) {
+      const mapPoint = view.toMap({ x: event.x, y: event.y });
+      const row = allRows.find(function (r) { return r.id === selectedId; });
+      if (!tempGraphic) {
+        tempGraphic = new Graphic({
+          geometry: mapPoint,
+          symbol: {
+            type: "simple-marker",
+            color: row && isCompleted(row.status) ? "#2e8540" : "#c0392b",
+            size: 12,
+            outline: { color: "white", width: 2 }
+          }
+        });
+        view.graphics.add(tempGraphic);
+      } else {
+        tempGraphic.geometry = mapPoint;
+      }
+      document.getElementById("mapHint").textContent = "Drag the point on the map to reposition it, or Save to keep it here.";
+      updateLocationReadout(mapPoint);
+      return;
+    }
+
+    if (selectedId) return; // finish/cancel current edit before selecting another
+    view.hitTest(event).then(function (response) {
+      const hit = response.results.find(function (r) { return r.graphic && r.graphic.layer === pointsLayer; });
+      if (hit) selectPoint(hit.graphic.attributes[objectIdField]);
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // Add point
+  // ------------------------------------------------------------------
+  document.getElementById("addPointBtn").addEventListener("click", function () {
+    if (addingPoint) { cancelAddPoint(); return; }
+    deselect();
+    addingPoint = true;
+    const btn = document.getElementById("addPointBtn");
+    btn.textContent = "Cancel adding point";
+    btn.classList.add("active");
+    document.getElementById("mapHint").style.display = "block";
+    document.getElementById("mapHint").textContent = "Click the map to place the new point.";
+  });
+
+  function cancelAddPoint() {
+    addingPoint = false;
+    const btn = document.getElementById("addPointBtn");
+    btn.textContent = "+ Add point";
+    btn.classList.remove("active");
+    document.getElementById("mapHint").style.display = "none";
+  }
+
+  function finishAddPoint(mapPoint) {
+    cancelAddPoint();
+    const newAttrs = {};
+    newAttrs[STATUS_FIELD] = STATUS_OPEN_VALUE;
+    newAttrs[NOTES_FIELD] = "";
+
+    pointsLayer.applyEdits({
+      addFeatures: [{ geometry: mapPoint, attributes: newAttrs }]
+    }).then(function (result) {
+      const addResult = result.addFeatureResults && result.addFeatureResults[0];
+      if (addResult && addResult.error) {
+        alert("Could not add point: " + addResult.error.message);
+        return;
+      }
+      pointsLayer.refresh();
+      loadAllFeatures().then(function () {
+        if (addResult && addResult.objectId != null) {
+          selectPoint(addResult.objectId);
+        }
+      });
+    }).catch(function (err) {
+      alert("Could not add point: " + (err && err.message ? err.message : err));
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // Mark as Completed (quick action)
+  // ------------------------------------------------------------------
+  document.getElementById("markCompleteBtn").addEventListener("click", function () {
+    if (!selectedId) return;
+    const btn = document.getElementById("markCompleteBtn");
+    const msgEl = document.getElementById("detailsMsg");
+    btn.disabled = true;
+    msgEl.className = "";
+    msgEl.textContent = "Saving...";
+
+    const updateAttrs = {};
+    updateAttrs[objectIdField] = selectedId;
+    updateAttrs[STATUS_FIELD] = STATUS_COMPLETED_VALUE;
+
+    pointsLayer.applyEdits({ updateFeatures: [{ attributes: updateAttrs }] }).then(function (result) {
+      btn.disabled = false;
+      const updateResult = result.updateFeatureResults && result.updateFeatureResults[0];
+      if (updateResult && updateResult.error) {
+        msgEl.className = "error";
+        msgEl.textContent = "Failed: " + updateResult.error.message;
+        return;
+      }
+      msgEl.className = "ok";
+      msgEl.textContent = "Marked completed.";
+      document.getElementById("statusSelect").value = "completed";
+      const row = allRows.find(function (r) { return r.id === selectedId; });
+      if (row) row.status = STATUS_COMPLETED_VALUE;
+      pointsLayer.refresh();
+      renderList();
+      updateProgress();
+    }).catch(function (err) {
+      btn.disabled = false;
+      msgEl.className = "error";
+      msgEl.textContent = "Failed: " + (err && err.message ? err.message : err);
+    });
+  });
+
+  // ------------------------------------------------------------------
+  // Save (Status + Notes + possibly moved geometry)
+  // ------------------------------------------------------------------
+  document.getElementById("saveBtn").addEventListener("click", function () {
+    if (!selectedId) return;
+    const saveBtn = document.getElementById("saveBtn");
+    const msgEl = document.getElementById("detailsMsg");
+
+    const newStatusUi = document.getElementById("statusSelect").value;
+    const newStatusFieldValue = newStatusUi === "completed" ? STATUS_COMPLETED_VALUE : STATUS_OPEN_VALUE;
+    const newNotes = document.getElementById("notesField").value;
+    const newAddress = document.getElementById("detailAddress").value;
+    const newGeometry = tempGraphic ? tempGraphic.geometry : null;
+
+    const updateAttrs = {};
+    updateAttrs[objectIdField] = selectedId;
+    updateAttrs[STATUS_FIELD] = newStatusFieldValue;
+    updateAttrs[NOTES_FIELD] = newNotes;
+    updateAttrs[ADDRESS_FIELD] = newAddress;
+
+    const edit = { attributes: updateAttrs };
+    if (newGeometry) edit.geometry = newGeometry;
+
+    saveBtn.disabled = true;
+    msgEl.className = "";
+    msgEl.textContent = "Saving...";
+
+    pointsLayer.applyEdits({ updateFeatures: [edit] }).then(function (result) {
+      saveBtn.disabled = false;
+      const updateResult = result.updateFeatureResults && result.updateFeatureResults[0];
+      if (updateResult && updateResult.error) {
+        msgEl.className = "error";
+        msgEl.textContent = "Save failed: " + updateResult.error.message;
+        return;
+      }
+      msgEl.className = "ok";
+      msgEl.textContent = "Saved.";
+      const row = allRows.find(function (r) { return r.id === selectedId; });
+      if (row) {
+        row.status = newStatusFieldValue;
+        row.notes = newNotes;
+        row.address = newAddress;
+        if (newGeometry) row.geometry = newGeometry;
+      }
+      pointsLayer.refresh();
+      updateProgress();
+      setTimeout(deselect, 500);
+    }).catch(function (err) {
+      saveBtn.disabled = false;
+      msgEl.className = "error";
+      msgEl.textContent = "Save failed: " + (err && err.message ? err.message : err);
+    });
+  });
 });
 </script>
 </body>
