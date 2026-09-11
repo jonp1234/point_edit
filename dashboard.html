@@ -239,8 +239,9 @@ require([
   "esri/layers/support/LabelClass",
   "esri/geometry/support/webMercatorUtils",
   "esri/widgets/BasemapGallery",
-  "esri/widgets/Expand"
-], function (esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, UniqueValueRenderer, LabelClass, webMercatorUtils, BasemapGallery, Expand) {
+  "esri/widgets/Expand",
+  "esri/widgets/Legend"
+], function (esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, UniqueValueRenderer, LabelClass, webMercatorUtils, BasemapGallery, Expand, Legend) {
 
   // =========================== CONFIG ===================================
   const CLIENT_ID = "Y4nNFLiG8tQXFLJU";
@@ -328,9 +329,11 @@ require([
 
       pointsLayer.renderer = new UniqueValueRenderer({
         field: STATUS_FIELD,
+        defaultLabel: "Pending",
         defaultSymbol: { type: "simple-marker", color: "#e0a800", size: 9, outline: { color: "white", width: 1 } },
         uniqueValueInfos: [{
           value: STATUS_COMPLETED_VALUE,
+          label: "Completed",
           symbol: { type: "simple-marker", color: "#2e8540", size: 9, outline: { color: "white", width: 1 } }
         }]
       });
@@ -364,6 +367,9 @@ require([
         expandTooltip: "Change basemap"
       });
       view.ui.add(basemapExpand, "top-right");
+
+      const legend = new Legend({ view: view, layerInfos: [{ layer: pointsLayer, title: "Points" }] });
+      view.ui.add(legend, "bottom-left");
 
       document.querySelectorAll("th[data-key]").forEach(function (th) {
         th.addEventListener("click", function () {
