@@ -533,6 +533,20 @@ require([
 
       const legend = new Legend({ view: view, layerInfos: [{ layer: pointsLayer, title: "Points" }] });
       view.ui.add(legend, "bottom-left");
+
+      // The 6m verification ring is drawn as a plain graphic (not a layer),
+      // so the Legend widget can't pick it up automatically. Add a matching
+      // custom swatch right below the widget so it reads as one legend.
+      const ringLegendDiv = document.createElement("div");
+      ringLegendDiv.className = "esri-widget";
+      ringLegendDiv.style.cssText =
+        "background:#fff;padding:6px 12px;font-size:12px;line-height:14px;border-radius:2px;" +
+        "box-shadow:0 1px 2px rgba(0,0,0,0.3);display:flex;align-items:center;gap:8px;margin-top:2px;";
+      ringLegendDiv.innerHTML =
+        '<span style="display:inline-block;width:14px;height:14px;border-radius:50%;flex:0 0 auto;' +
+        'border:1.5px solid rgba(0,121,193,0.7);background:rgba(0,121,193,0.08);"></span>' +
+        '<span>6m Verification Ring</span>';
+      view.ui.add(ringLegendDiv, "bottom-left");
     });
   }
 
@@ -583,7 +597,9 @@ require([
     renderList();
   });
 
-  function renderList() {
+  // Rows in current filter + search order — the same order the list on the
+  // left shows, and what "next record" (after Save) advances through.
+  function getFilteredRows() {
     let rows = allRows.slice();
 
     if (currentFilter === "pending") rows = rows.filter(function (r) { return !isCompleted(r.status); });
@@ -596,6 +612,12 @@ require([
           (r.address || "").toLowerCase().includes(searchTerm);
       });
     }
+
+    return rows;
+  }
+
+  function renderList() {
+    const rows = getFilteredRows();
 
     const listEl = document.getElementById("pointList");
     listEl.innerHTML = "";
@@ -1013,6 +1035,12 @@ require([
     msgEl.className = "";
     msgEl.textContent = "Saving...";
 
+    // Snapshot the currently visible (filtered) list order *before* the save
+    // changes this row's status, so "next" means the next row down from
+    // where this one sat in the list the user was looking at.
+    const preSaveFilteredIds = getFilteredRows().map(function (r) { return r.id; });
+    const savedId = selectedId;
+
     pointsLayer.applyEdits({ updateFeatures: [edit] }).then(function (result) {
       saveBtn.disabled = false;
       const updateResult = result.updateFeatureResults && result.updateFeatureResults[0];
@@ -1032,7 +1060,17 @@ require([
       }
       pointsLayer.refresh();
       updateProgress();
-      setTimeout(deselect, 500);
+
+      const savedIdx = preSaveFilteredIds.indexOf(savedId);
+      const nextId = savedIdx > -1 ? preSaveFilteredIds[savedIdx + 1] : undefined;
+
+      setTimeout(function () {
+        if (nextId !== undefined && allRows.some(function (r) { return r.id === nextId; })) {
+          selectPoint(nextId);
+        } else {
+          deselect();
+        }
+      }, 500);
     }).catch(function (err) {
       saveBtn.disabled = false;
       msgEl.className = "error";
