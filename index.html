@@ -388,11 +388,12 @@ require([
   "esri/geometry/support/webMercatorUtils",
   "esri/geometry/Polygon",
   "esri/widgets/BasemapGallery",
-  "esri/widgets/Expand"
+  "esri/widgets/Expand",
+  "esri/widgets/Legend"
 ], function (
   esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, Graphic,
   FeatureEffect, FeatureFilter, UniqueValueRenderer, LabelClass, webMercatorUtils, Polygon,
-  BasemapGallery, Expand
+  BasemapGallery, Expand, Legend
 ) {
 
   // =========================== CONFIG ===================================
@@ -481,9 +482,11 @@ require([
 
       pointsLayer.renderer = new UniqueValueRenderer({
         field: STATUS_FIELD,
+        defaultLabel: "Pending",
         defaultSymbol: { type: "simple-marker", color: "#c0392b", size: 10, outline: { color: "white", width: 1.5 } },
         uniqueValueInfos: [{
           value: STATUS_COMPLETED_VALUE,
+          label: "Completed",
           symbol: { type: "simple-marker", color: "#2e8540", size: 10, outline: { color: "white", width: 1.5 } }
         }]
       });
@@ -527,6 +530,9 @@ require([
         expandTooltip: "Change basemap"
       });
       view.ui.add(basemapExpand, "top-right");
+
+      const legend = new Legend({ view: view, layerInfos: [{ layer: pointsLayer, title: "Points" }] });
+      view.ui.add(legend, "bottom-left");
     });
   }
 
