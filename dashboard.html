@@ -63,7 +63,7 @@
   #signInBtn:hover { background: #00548a; }
   #signInError { color: #c0392b; font-size: 13px; max-width: 360px; text-align: center; }
 
-  #app { display: none; max-width: 1200px; margin: 0 auto; padding: 20px; }
+  #app { display: none; max-width: 1500px; margin: 0 auto; padding: 20px; }
 
   header {
     display: flex;
@@ -105,8 +105,10 @@
   .card .num { font-size: 30px; font-weight: 700; line-height: 1.1; }
   .card .label { font-size: 12px; color: #666; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
   .card.completed .num { color: #2e8540; }
-  .card.open .num { color: #e0a800; }
+  .card.open .num { color: #c0392b; }
   .card.total .num { color: #0079c1; }
+
+  #mapPanel { position: relative; }
 
   #mainGrid {
     display: grid;
@@ -126,16 +128,18 @@
   }
   .panel h2 { font-size: 14px; margin: 0 0 12px 0; color: #333; }
 
-  #mapDiv { height: 320px; border-radius: 6px; overflow: hidden; }
+  #mapDiv { height: 520px; border-radius: 6px; overflow: hidden; }
 
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #eee; }
   th { cursor: pointer; color: #444; user-select: none; white-space: nowrap; }
   th:hover { color: #0079c1; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #f5f9fc; }
   td.notes { color: #555; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
   .badge.completed { background: #e3f4e8; color: #206b30; }
-  .badge.open { background: #fdf1d6; color: #8a6300; }
+  .badge.open { background: #fbe0dd; color: #a12a20; }
 
   #tableWrap { max-height: 420px; overflow-y: auto; }
 
@@ -168,42 +172,39 @@
 
     <div id="statCards">
       <div class="card completed"><div class="num" id="countCompleted">-</div><div class="label">Completed</div></div>
-      <div class="card open"><div class="num" id="countOpen">-</div><div class="label">Open</div></div>
+      <div class="card open"><div class="num" id="countOpen">-</div><div class="label">Pending</div></div>
       <div class="card total"><div class="num" id="countTotal">-</div><div class="label">Total points</div></div>
     </div>
 
+    <div class="panel" id="mapPanel">
+      <h2>Map</h2>
+      <div id="mapDiv"></div>
+    </div>
+
     <div id="mainGrid">
-      <div>
-        <div class="panel">
-          <h2>Map</h2>
-          <div id="mapDiv"></div>
+      <div class="panel">
+        <h2>All points</h2>
+        <div id="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-key="Address">Address</th>
+                <th data-key="OBJECTID">ID</th>
+                <th data-key="Status">Status</th>
+                <th data-key="Notes">Notes</th>
+                <th data-key="EditDate">Last edited</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+          </table>
         </div>
-        <div class="panel">
-          <h2>All points</h2>
-          <div id="tableWrap">
-            <table>
-              <thead>
-                <tr>
-                  <th data-key="Address">Address</th>
-                  <th data-key="OBJECTID">ID</th>
-                  <th data-key="Status">Status</th>
-                  <th data-key="Notes">Notes</th>
-                  <th data-key="EditDate">Last edited</th>
-                </tr>
-              </thead>
-              <tbody id="tableBody"></tbody>
-            </table>
-          </div>
-          <div id="tableError"></div>
-        </div>
+        <div id="tableError"></div>
       </div>
-      <div>
-        <div class="panel">
-          <h2>Recent activity</h2>
-          <ul id="recentList"></ul>
-          <div id="recentNote"></div>
-          <div id="recentError"></div>
-        </div>
+      <div class="panel">
+        <h2>Recent activity</h2>
+        <ul id="recentList"></ul>
+        <div id="recentNote"></div>
+        <div id="recentError"></div>
       </div>
     </div>
   </div>
@@ -216,8 +217,10 @@ require([
   "esri/Map",
   "esri/views/MapView",
   "esri/layers/FeatureLayer",
-  "esri/renderers/UniqueValueRenderer"
-], function (esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, UniqueValueRenderer) {
+  "esri/renderers/UniqueValueRenderer",
+  "esri/widgets/BasemapGallery",
+  "esri/widgets/Expand"
+], function (esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, UniqueValueRenderer, BasemapGallery, Expand) {
 
   // =========================== CONFIG ===================================
   const CLIENT_ID = "Y4nNFLiG8tQXFLJU";
@@ -311,11 +314,19 @@ require([
         }]
       });
 
-      const map = new Map({ basemap: "streets-navigation-vector", layers: [pointsLayer] });
+      const map = new Map({ basemap: "hybrid", layers: [pointsLayer] }); // "hybrid" = Imagery Hybrid
       view = new MapView({ container: "mapDiv", map: map, zoom: 12, ui: { components: ["zoom"] } });
       view.when(function () {
         view.goTo(pointsLayer.fullExtent).catch(function () {});
       });
+
+      const basemapGallery = new BasemapGallery({ view: view });
+      const basemapExpand = new Expand({
+        view: view,
+        content: basemapGallery,
+        expandTooltip: "Change basemap"
+      });
+      view.ui.add(basemapExpand, "top-right");
 
       document.querySelectorAll("th[data-key]").forEach(function (th) {
         th.addEventListener("click", function () {
@@ -375,11 +386,11 @@ require([
     const outFields = [objectIdField, STATUS_FIELD, NOTES_FIELD, ADDRESS_FIELD];
     if (editDateField) outFields.push(editDateField);
     query.outFields = outFields;
-    query.returnGeometry = false;
+    query.returnGeometry = true; // needed so a table row can zoom the map to it
     query.num = 2000;
 
     pointsLayer.queryFeatures(query).then(function (result) {
-      allRows = result.features.map(function (f) { return f.attributes; });
+      allRows = result.features.map(function (f) { return { attrs: f.attributes, geometry: f.geometry }; });
       document.getElementById("tableError").textContent = "";
       renderTable();
     }).catch(function (err) {
@@ -390,8 +401,8 @@ require([
 
   function renderTable() {
     const rows = allRows.slice().sort(function (a, b) {
-      let av = a[sortKey === "EditDate" ? editDateField : sortKey];
-      let bv = b[sortKey === "EditDate" ? editDateField : sortKey];
+      const key = sortKey === "EditDate" ? editDateField : sortKey;
+      let av = a.attrs[key], bv = b.attrs[key];
       if (av == null) av = "";
       if (bv == null) bv = "";
       if (av < bv) return -1 * sortDir;
@@ -401,10 +412,12 @@ require([
 
     const tbody = document.getElementById("tableBody");
     tbody.innerHTML = "";
-    rows.forEach(function (attrs) {
+    rows.forEach(function (row) {
+      const attrs = row.attrs;
       const statusVal = (attrs[STATUS_FIELD] || "").toString().toLowerCase();
       const isCompleted = statusVal === STATUS_COMPLETED_VALUE.toLowerCase();
       const tr = document.createElement("tr");
+      tr.title = row.geometry ? "Click to zoom to this point on the map" : "No location stored for this point";
 
       const addressTd = document.createElement("td");
       addressTd.textContent = attrs[ADDRESS_FIELD] || "-";
@@ -417,7 +430,7 @@ require([
       const statusTd = document.createElement("td");
       const badge = document.createElement("span");
       badge.className = "badge " + (isCompleted ? "completed" : "open");
-      badge.textContent = isCompleted ? "Completed" : (attrs[STATUS_FIELD] || "Open");
+      badge.textContent = isCompleted ? "Completed" : (attrs[STATUS_FIELD] || "Pending");
       statusTd.appendChild(badge);
       tr.appendChild(statusTd);
 
@@ -434,6 +447,14 @@ require([
         editTd.textContent = "-";
       }
       tr.appendChild(editTd);
+
+      if (row.geometry) {
+        tr.addEventListener("click", function () {
+          view.goTo({ target: row.geometry, zoom: 17 }, { duration: 500 }).catch(function (err) {
+            if (!err || err.name !== "AbortError") console.error("Zoom to point failed:", err);
+          });
+        });
+      }
 
       tbody.appendChild(tr);
     });
@@ -475,7 +496,7 @@ require([
         strong.textContent = label + " ";
         const badge = document.createElement("span");
         badge.className = "badge " + (isCompleted ? "completed" : "open");
-        badge.textContent = isCompleted ? "Completed" : (attrs[STATUS_FIELD] || "Open");
+        badge.textContent = isCompleted ? "Completed" : (attrs[STATUS_FIELD] || "Pending");
         const whenDiv = document.createElement("div");
         whenDiv.style.cssText = "color:#888;font-size:12px;";
         whenDiv.textContent = when;
