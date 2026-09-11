@@ -9,8 +9,9 @@
   =========================================================================
   ArcGIS Online Point Editing Tool
   -------------------------------------------------------------------------
-  Lets a signed-in   user:
-    - click a point on  the map to select it
+  Lets a signed-in user:
+    - add a new point via the editor panel
+    - click a point on the map to select it
     - drag it to a new location to move it
     - set its "Status" field (a one-click "Mark Completed" shortcut, or the
       full edit form)
@@ -149,7 +150,7 @@
   </div>
 
   <div id="topBar">
-    <div id="instructions">Click a point, then choose <strong>Update</strong> to edit its Status/Notes or drag it to a new location.</div>
+    <div id="instructions">Use the editor panel (top right) to <strong>add</strong> a new point, or click an existing point and choose <strong>Update</strong> to edit its Status/Notes or drag it to a new location.</div>
     <div id="userBar" style="display:none;">
       <span id="userLabel"></span>
       <button id="signOutBtn">Sign out</button>
@@ -264,7 +265,7 @@ require([
       view: view,
       layerInfos: [{
         layer: pointsLayer,
-        addEnabled: false,
+        addEnabled: true,
         deleteEnabled: false,
         updateEnabled: true,
         formTemplate: {
