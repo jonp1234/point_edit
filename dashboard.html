@@ -184,6 +184,7 @@
             <table>
               <thead>
                 <tr>
+                  <th data-key="Address">Address</th>
                   <th data-key="OBJECTID">ID</th>
                   <th data-key="Status">Status</th>
                   <th data-key="Notes">Notes</th>
@@ -224,6 +225,7 @@ require([
   const FEATURE_LAYER_URL = "https://services9.arcgis.com/zEltomHsPUsr6yNG/arcgis/rest/services/Points/FeatureServer/0";
   const STATUS_FIELD = "Status";
   const NOTES_FIELD = "Notes";
+  const ADDRESS_FIELD = "Address";
   const STATUS_COMPLETED_VALUE = "completed";
   const AUTO_REFRESH_SECONDS = 30;
   // ========================================================================
@@ -370,7 +372,7 @@ require([
   function refreshTable() {
     const query = pointsLayer.createQuery();
     query.where = "1=1";
-    const outFields = [objectIdField, STATUS_FIELD, NOTES_FIELD];
+    const outFields = [objectIdField, STATUS_FIELD, NOTES_FIELD, ADDRESS_FIELD];
     if (editDateField) outFields.push(editDateField);
     query.outFields = outFields;
     query.returnGeometry = false;
@@ -403,6 +405,10 @@ require([
       const statusVal = (attrs[STATUS_FIELD] || "").toString().toLowerCase();
       const isCompleted = statusVal === STATUS_COMPLETED_VALUE.toLowerCase();
       const tr = document.createElement("tr");
+
+      const addressTd = document.createElement("td");
+      addressTd.textContent = attrs[ADDRESS_FIELD] || "-";
+      tr.appendChild(addressTd);
 
       const idTd = document.createElement("td");
       idTd.textContent = attrs[objectIdField];
@@ -449,7 +455,7 @@ require([
 
     const query = pointsLayer.createQuery();
     query.where = "1=1";
-    query.outFields = [objectIdField, STATUS_FIELD, NOTES_FIELD, editDateField];
+    query.outFields = [objectIdField, STATUS_FIELD, NOTES_FIELD, ADDRESS_FIELD, editDateField];
     query.orderByFields = [editDateField + " DESC"];
     query.num = 8;
     query.returnGeometry = false;
@@ -463,11 +469,20 @@ require([
         const isCompleted = statusVal === STATUS_COMPLETED_VALUE.toLowerCase();
         const li = document.createElement("li");
         const when = attrs[editDateField] ? new Date(attrs[editDateField]).toLocaleString() : "";
-        li.innerHTML =
-          "<strong>Point " + attrs[objectIdField] + "</strong> " +
-          "<span class=\"badge " + (isCompleted ? "completed" : "open") + "\">" +
-          (isCompleted ? "Completed" : (attrs[STATUS_FIELD] || "Open")) + "</span>" +
-          "<div style=\"color:#888;font-size:12px;\">" + when + "</div>";
+        const label = attrs[ADDRESS_FIELD] || ("Point " + attrs[objectIdField]);
+
+        const strong = document.createElement("strong");
+        strong.textContent = label + " ";
+        const badge = document.createElement("span");
+        badge.className = "badge " + (isCompleted ? "completed" : "open");
+        badge.textContent = isCompleted ? "Completed" : (attrs[STATUS_FIELD] || "Open");
+        const whenDiv = document.createElement("div");
+        whenDiv.style.cssText = "color:#888;font-size:12px;";
+        whenDiv.textContent = when;
+
+        li.appendChild(strong);
+        li.appendChild(badge);
+        li.appendChild(whenDiv);
         recentListEl.appendChild(li);
       });
     }).catch(function (err) {
