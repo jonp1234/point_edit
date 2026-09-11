@@ -152,7 +152,7 @@
   .pointRow:hover { background: #f5f9fc; }
   .pointRow.selected { background: #e7f2fa; }
   .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
-  .dot.pending { background: #e0a800; }
+  .dot.pending { background: #c0392b; }
   .dot.completed { background: #2e8540; }
   .rowText { min-width: 0; flex: 1; }
   .rowTitle { font-size: 13px; font-weight: 600; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -197,7 +197,7 @@
   .detailLabel { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 4px; }
   .detailValue { font-size: 13px; color: #333; }
   .statusBadge { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; }
-  .statusBadge.pending { background: #fdf1d6; color: #8a6300; }
+  .statusBadge.pending { background: #fbe0dd; color: #a12a20; }
   .statusBadge.completed { background: #e3f4e8; color: #206b30; }
 
   #statusSelect {
@@ -297,7 +297,7 @@
           <input id="searchBox" type="text" placeholder="Search by ID or notes..." />
           <button id="addPointBtn" type="button">+ Add point</button>
           <div id="filterTabs">
-            <div class="filterTab active" data-filter="pending">Pending</div>
+            <div class="filterTab active" data-filter="pending">Open</div>
             <div class="filterTab" data-filter="completed">Completed</div>
             <div class="filterTab" data-filter="all">All</div>
           </div>
@@ -369,10 +369,13 @@ require([
   "esri/layers/support/FeatureFilter",
   "esri/renderers/UniqueValueRenderer",
   "esri/geometry/geometryEngine",
-  "esri/geometry/support/webMercatorUtils"
+  "esri/geometry/support/webMercatorUtils",
+  "esri/widgets/BasemapGallery",
+  "esri/widgets/Expand"
 ], function (
   esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, Graphic,
-  FeatureEffect, FeatureFilter, UniqueValueRenderer, geometryEngine, webMercatorUtils
+  FeatureEffect, FeatureFilter, UniqueValueRenderer, geometryEngine, webMercatorUtils,
+  BasemapGallery, Expand
 ) {
 
   // =========================== CONFIG ===================================
@@ -456,7 +459,7 @@ require([
 
       pointsLayer.renderer = new UniqueValueRenderer({
         field: STATUS_FIELD,
-        defaultSymbol: { type: "simple-marker", color: "#e0a800", size: 10, outline: { color: "white", width: 1.5 } },
+        defaultSymbol: { type: "simple-marker", color: "#c0392b", size: 10, outline: { color: "white", width: 1.5 } },
         uniqueValueInfos: [{
           value: STATUS_COMPLETED_VALUE,
           symbol: { type: "simple-marker", color: "#2e8540", size: 10, outline: { color: "white", width: 1.5 } }
@@ -476,6 +479,15 @@ require([
 
       view.on("click", onMapClick);
       view.on("drag", onMapDrag);
+
+      // Basemap switcher, collapsed into a small expandable button
+      const basemapGallery = new BasemapGallery({ view: view });
+      const basemapExpand = new Expand({
+        view: view,
+        content: basemapGallery,
+        expandTooltip: "Change basemap"
+      });
+      view.ui.add(basemapExpand, "top-right");
     });
   }
 
@@ -564,7 +576,7 @@ require([
       title.textContent = "Point " + r.id;
       const sub = document.createElement("div");
       sub.className = "rowSub";
-      sub.textContent = isCompleted(r.status) ? "Completed" : "Pending";
+      sub.textContent = isCompleted(r.status) ? "Completed" : "Open";
       text.appendChild(title);
       text.appendChild(sub);
 
@@ -615,13 +627,13 @@ require([
       geometry: row.geometry,
       symbol: {
         type: "simple-marker",
-        color: isCompleted(row.status) ? "#2e8540" : "#e0a800",
+        color: isCompleted(row.status) ? "#2e8540" : "#c0392b",
         size: 12,
         outline: { color: "white", width: 2 }
       }
     });
     view.graphics.add(tempGraphic);
-    view.goTo({ target: row.geometry, zoom: Math.max(view.zoom, 15) }).catch(function () {});
+    view.goTo({ target: row.geometry, zoom: 17 }, { duration: 500 }).catch(function () {});
   }
 
   function deselect() {
