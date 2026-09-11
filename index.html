@@ -87,6 +87,8 @@
   #progressBar { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; }
   #progressFill { height: 100%; background: #2e8540; width: 0%; transition: width 0.3s; }
   #headerRight { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 13px; color: #555; }
+  #dashboardLink { color: #0079c1; text-decoration: none; font-weight: 600; }
+  #dashboardLink:hover { text-decoration: underline; }
   #signOutBtn {
     background: none; border: 1px solid #ccc; border-radius: 4px;
     padding: 5px 10px; cursor: pointer; font-size: 12px;
@@ -196,6 +198,14 @@
   .detailRow { margin-bottom: 14px; }
   .detailLabel { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 4px; }
   .detailValue { font-size: 13px; color: #333; }
+  .detailInput {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 13px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-family: inherit;
+  }
   .statusBadge { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; }
   .statusBadge.pending { background: #fbe0dd; color: #a12a20; }
   .statusBadge.completed { background: #e3f4e8; color: #206b30; }
@@ -286,6 +296,7 @@
         <div id="progressBar"><div id="progressFill"></div></div>
       </div>
       <div id="headerRight">
+        <a id="dashboardLink" href="https://jonp1234.github.io/point_edit/dashboard.html" target="_blank" rel="noopener">Dashboard</a>
         <span id="userLabel"></span>
         <button id="signOutBtn">Sign out</button>
       </div>
@@ -318,7 +329,7 @@
 
         <div class="detailRow">
           <div class="detailLabel">Address</div>
-          <div class="detailValue" id="detailAddress">-</div>
+          <input type="text" id="detailAddress" class="detailInput" placeholder="Enter address..." />
         </div>
 
         <div class="detailRow">
@@ -471,7 +482,7 @@ require([
         }]
       });
 
-      const map = new Map({ basemap: "streets-navigation-vector", layers: [pointsLayer] });
+      const map = new Map({ basemap: "hybrid", layers: [pointsLayer] }); // "hybrid" = Imagery Hybrid
       view = new MapView({ container: "viewDiv", map: map, zoom: 12 });
 
       view.when(function () {
@@ -624,7 +635,7 @@ require([
     }
 
     document.getElementById("detailsTitle").textContent = "Point details";
-    document.getElementById("detailAddress").textContent = row.address || "-";
+    document.getElementById("detailAddress").value = row.address || "";
     document.getElementById("detailId").textContent = id;
     document.getElementById("statusSelect").value = isCompleted(row.status) ? "completed" : "open";
     document.getElementById("notesField").value = row.notes || "";
@@ -901,12 +912,14 @@ require([
     const newStatusUi = document.getElementById("statusSelect").value;
     const newStatusFieldValue = newStatusUi === "completed" ? STATUS_COMPLETED_VALUE : STATUS_OPEN_VALUE;
     const newNotes = document.getElementById("notesField").value;
+    const newAddress = document.getElementById("detailAddress").value;
     const newGeometry = tempGraphic ? tempGraphic.geometry : null;
 
     const updateAttrs = {};
     updateAttrs[objectIdField] = selectedId;
     updateAttrs[STATUS_FIELD] = newStatusFieldValue;
     updateAttrs[NOTES_FIELD] = newNotes;
+    updateAttrs[ADDRESS_FIELD] = newAddress;
 
     const edit = { attributes: updateAttrs };
     if (newGeometry) edit.geometry = newGeometry;
@@ -929,6 +942,7 @@ require([
       if (row) {
         row.status = newStatusFieldValue;
         row.notes = newNotes;
+        row.address = newAddress;
         if (newGeometry) row.geometry = newGeometry;
       }
       pointsLayer.refresh();
