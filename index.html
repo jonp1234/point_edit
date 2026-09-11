@@ -297,9 +297,9 @@
           <input id="searchBox" type="text" placeholder="Search by address, ID, or notes..." />
           <button id="addPointBtn" type="button">+ Add point</button>
           <div id="filterTabs">
-            <div class="filterTab active" data-filter="pending">Pending</div>
+            <div class="filterTab" data-filter="pending">Pending</div>
             <div class="filterTab" data-filter="completed">Completed</div>
-            <div class="filterTab" data-filter="all">All</div>
+            <div class="filterTab active" data-filter="all">All</div>
           </div>
         </div>
         <div id="pointList"></div>
@@ -439,7 +439,7 @@ require([
   // ------------------------------------------------------------------
   let view, pointsLayer, layerView, objectIdField;
   let allRows = [];              // [{ id, status, notes, geometry }]
-  let currentFilter = "pending";
+  let currentFilter = "all";
   let searchTerm = "";
   let selectedId = null;
   let selectedOriginalGeometry = null; // geometry when selection began (for distance calc)
@@ -584,7 +584,8 @@ require([
       title.textContent = r.address || ("Point " + r.id);
       const sub = document.createElement("div");
       sub.className = "rowSub";
-      sub.textContent = "ID " + r.id + " · " + (isCompleted(r.status) ? "Completed" : "Pending");
+      sub.textContent = "ID " + r.id + " · " + (isCompleted(r.status) ? "Completed" : "Pending") +
+        (r.geometry ? "" : " · No location");
       text.appendChild(title);
       text.appendChild(sub);
 
@@ -610,14 +611,17 @@ require([
     editingLocation = false;
     isDraggingPoint = false;
 
+    const hasGeometry = !!row.geometry;
+
     // Zoom in on the point first and independently of everything below, so
     // a problem with the move-graphic setup can never prevent the zoom.
-    if (row.geometry) {
+    if (hasGeometry) {
       view.goTo({ target: row.geometry, zoom: 17 }, { duration: 500 }).catch(function (err) {
         if (!err || err.name !== "AbortError") console.error("Zoom to point failed:", err);
       });
     } else {
-      console.warn("Point " + id + " has no geometry to zoom to.");
+      console.warn("Point " + id + " has no location stored yet, so there's nothing to zoom to. " +
+        "Use Edit Location, then click the map to place it.");
     }
 
     document.getElementById("detailsTitle").textContent = "Point details";
@@ -630,33 +634,45 @@ require([
     document.getElementById("distanceRow").style.display = "none";
     document.getElementById("detailsMsg").textContent = "";
     document.getElementById("detailsMsg").className = "";
-    document.getElementById("mapHint").style.display = "none";
     updateLocationReadout(row.geometry);
+
+    if (hasGeometry) {
+      document.getElementById("mapHint").style.display = "none";
+    } else {
+      document.getElementById("mapHint").style.display = "block";
+      document.getElementById("mapHint").textContent =
+        "This point has no location saved. Click \"Edit Location\" below, then click the map to place it.";
+    }
 
     document.getElementById("detailsPane").style.display = "flex";
     renderList();
 
-    // Hide the real feature and show a graphic we can move around freely.
-    // Wrapped in try/catch so a problem here (e.g. layer view not ready)
-    // never blocks the zoom or the details panel above.
-    try {
-      layerView.featureEffect = new FeatureEffect({
-        filter: new FeatureFilter({ where: objectIdField + " <> " + id }),
-        excludedEffect: "opacity(0%)"
-      });
-      if (tempGraphic) view.graphics.remove(tempGraphic);
-      tempGraphic = new Graphic({
-        geometry: row.geometry,
-        symbol: {
-          type: "simple-marker",
-          color: isCompleted(row.status) ? "#2e8540" : "#c0392b",
-          size: 12,
-          outline: { color: "white", width: 2 }
-        }
-      });
-      view.graphics.add(tempGraphic);
-    } catch (err) {
-      console.error("Could not set up the movable point graphic:", err);
+    if (tempGraphic) { view.graphics.remove(tempGraphic); tempGraphic = null; }
+
+    if (hasGeometry) {
+      // Hide the real feature and show a graphic we can move around freely.
+      // Wrapped in try/catch so a problem here (e.g. layer view not ready)
+      // never blocks the zoom or the details panel above.
+      try {
+        layerView.featureEffect = new FeatureEffect({
+          filter: new FeatureFilter({ where: objectIdField + " <> " + id }),
+          excludedEffect: "opacity(0%)"
+        });
+        tempGraphic = new Graphic({
+          geometry: row.geometry,
+          symbol: {
+            type: "simple-marker",
+            color: isCompleted(row.status) ? "#2e8540" : "#c0392b",
+            size: 12,
+            outline: { color: "white", width: 2 }
+          }
+        });
+        view.graphics.add(tempGraphic);
+      } catch (err) {
+        console.error("Could not set up the movable point graphic:", err);
+      }
+    } else if (layerView) {
+      layerView.featureEffect = null; // nothing to hide/exclude for a point with no geometry
     }
   }
 
@@ -674,7 +690,11 @@ require([
   document.getElementById("cancelBtn").addEventListener("click", deselect);
 
   function updateLocationReadout(geometry) {
-    if (!geometry) return;
+    if (!geometry) {
+      document.getElementById("detailLocation").textContent = "Not set";
+      document.getElementById("distanceRow").style.display = "none";
+      return;
+    }
     const geo = geometry.spatialReference && geometry.spatialReference.isWebMercator
       ? webMercatorUtils.webMercatorToGeographic(geometry)
       : geometry;
@@ -695,11 +715,14 @@ require([
     if (!selectedId) return;
     editingLocation = !editingLocation;
     const btn = document.getElementById("editLocationBtn");
+    const hasPlacedGeometry = tempGraphic && tempGraphic.geometry;
     if (editingLocation) {
       btn.textContent = "Done Moving";
       btn.classList.add("active");
       document.getElementById("mapHint").style.display = "block";
-      document.getElementById("mapHint").textContent = "Drag the point on the map to reposition it.";
+      document.getElementById("mapHint").textContent = hasPlacedGeometry
+        ? "Drag the point on the map to reposition it."
+        : "Click the map to place this point.";
     } else {
       btn.textContent = "Edit Location";
       btn.classList.remove("active");
@@ -708,7 +731,7 @@ require([
   });
 
   function onMapDrag(event) {
-    if (!editingLocation || !tempGraphic) return;
+    if (!editingLocation || !tempGraphic || !tempGraphic.geometry) return;
     if (event.action === "start") {
       const screenPt = view.toScreen(tempGraphic.geometry);
       const dx = event.x - screenPt.x, dy = event.y - screenPt.y;
@@ -733,6 +756,31 @@ require([
       finishAddPoint(mapPoint);
       return;
     }
+
+    // Selected point has no location yet and we're in Edit Location mode:
+    // treat this click as placing it, rather than dragging an existing point.
+    if (selectedId && editingLocation && (!tempGraphic || !tempGraphic.geometry)) {
+      const mapPoint = view.toMap({ x: event.x, y: event.y });
+      const row = allRows.find(function (r) { return r.id === selectedId; });
+      if (!tempGraphic) {
+        tempGraphic = new Graphic({
+          geometry: mapPoint,
+          symbol: {
+            type: "simple-marker",
+            color: row && isCompleted(row.status) ? "#2e8540" : "#c0392b",
+            size: 12,
+            outline: { color: "white", width: 2 }
+          }
+        });
+        view.graphics.add(tempGraphic);
+      } else {
+        tempGraphic.geometry = mapPoint;
+      }
+      document.getElementById("mapHint").textContent = "Drag the point on the map to reposition it, or Save to keep it here.";
+      updateLocationReadout(mapPoint);
+      return;
+    }
+
     if (selectedId) return; // finish/cancel current edit before selecting another
     view.hitTest(event).then(function (response) {
       const hit = response.results.find(function (r) { return r.graphic && r.graphic.layer === pointsLayer; });
