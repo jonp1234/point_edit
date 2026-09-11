@@ -73,6 +73,8 @@
   }
   header h1 { font-size: 20px; margin: 0; }
   #headerRight { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #555; }
+  #editorLink { color: #0079c1; text-decoration: none; font-weight: 600; }
+  #editorLink:hover { text-decoration: underline; }
   #refreshBtn {
     background: #fff;
     border: 1px solid #ccc;
@@ -163,6 +165,7 @@
     <header>
       <h1>Points Dashboard</h1>
       <div id="headerRight">
+        <a id="editorLink" href="https://jonp1234.github.io/point_edit/" target="_blank" rel="noopener">Editor</a>
         <span id="lastUpdated"></span>
         <button id="refreshBtn">Refresh</button>
         <span id="userLabel"></span>
