@@ -387,12 +387,13 @@ require([
   "esri/layers/support/LabelClass",
   "esri/geometry/support/webMercatorUtils",
   "esri/geometry/Polygon",
+  "esri/geometry/Polyline",
   "esri/widgets/BasemapGallery",
   "esri/widgets/Expand",
   "esri/widgets/Legend"
 ], function (
   esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, Graphic,
-  FeatureEffect, FeatureFilter, UniqueValueRenderer, LabelClass, webMercatorUtils, Polygon,
+  FeatureEffect, FeatureFilter, UniqueValueRenderer, LabelClass, webMercatorUtils, Polygon, Polyline,
   BasemapGallery, Expand, Legend
 ) {
 
@@ -464,6 +465,15 @@ require([
   let isDraggingPoint = false;
   let addingPoint = false;
   const MOVE_GUIDE_RADIUS_METERS = 6;
+
+  // Measure distance tool
+  let measuring = false;
+  let measureUnit = "meters"; // "meters" | "feet"
+  let measurePoints = [];     // map-SR points clicked so far
+  let measureLineGraphic = null;
+  let measureVertexGraphics = [];
+  let measureTotalEl = null;  // set once the measure panel is built
+  const METERS_TO_FEET = 3.28084;
 
   function isCompleted(status) {
     return (status || "").toString().toLowerCase() === STATUS_COMPLETED_VALUE.toLowerCase();
@@ -547,6 +557,50 @@ require([
         'border:1.5px solid rgba(0,121,193,0.7);background:rgba(0,121,193,0.08);"></span>' +
         '<span>6m Verification Ring</span>';
       view.ui.add(ringLegendDiv, "bottom-left");
+
+      // Measure distance tool: click points on the map, running total shown
+      // in meters or feet (defaults to meters).
+      const measurePanel = document.createElement("div");
+      measurePanel.className = "esri-widget";
+      measurePanel.style.cssText = "padding:12px;font-size:12px;width:200px;";
+      measurePanel.innerHTML =
+        '<div style="font-weight:600;margin-bottom:8px;">Measure Distance</div>' +
+        '<div style="display:flex;gap:12px;margin-bottom:8px;">' +
+          '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;">' +
+            '<input type="radio" name="measureUnit" value="meters" checked> Meters</label>' +
+          '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;">' +
+            '<input type="radio" name="measureUnit" value="feet"> Feet</label>' +
+        '</div>' +
+        '<div style="margin-bottom:10px;color:#333;">Total: <strong id="measureTotal">0.0 m</strong></div>' +
+        '<div style="display:flex;gap:6px;">' +
+          '<button id="measureToggleBtn" type="button" ' +
+            'style="flex:1;padding:5px 8px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer;">' +
+            'Start Measuring</button>' +
+          '<button id="measureClearBtn" type="button" ' +
+            'style="padding:5px 8px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer;">Clear</button>' +
+        '</div>' +
+        '<div style="margin-top:8px;color:#777;font-size:11px;">Click the map to add points along the path you want to measure.</div>';
+
+      measureTotalEl = measurePanel.querySelector("#measureTotal");
+      measurePanel.querySelectorAll('input[name="measureUnit"]').forEach(function (radio) {
+        radio.addEventListener("change", function () {
+          measureUnit = radio.value;
+          updateMeasureReadout();
+        });
+      });
+      measurePanel.querySelector("#measureToggleBtn").addEventListener("click", function () {
+        setMeasuring(!measuring);
+      });
+      measurePanel.querySelector("#measureClearBtn").addEventListener("click", function () {
+        clearMeasure();
+      });
+
+      const measureExpand = new Expand({
+        view: view,
+        content: measurePanel,
+        expandTooltip: "Measure distance"
+      });
+      view.ui.add(measureExpand, "top-right");
     });
   }
 
@@ -663,6 +717,7 @@ require([
   // ------------------------------------------------------------------
   function selectPoint(id) {
     if (addingPoint) cancelAddPoint();
+    if (measuring) setMeasuring(false);
 
     const row = allRows.find(function (r) { return r.id === id; });
     if (!row) return;
@@ -826,6 +881,89 @@ require([
     });
   }
 
+  // ------------------------------------------------------------------
+  // Measure distance
+  // ------------------------------------------------------------------
+  function formatDistance(meters) {
+    return measureUnit === "feet"
+      ? (meters * METERS_TO_FEET).toFixed(1) + " ft"
+      : meters.toFixed(1) + " m";
+  }
+
+  function totalMeasureDistance() {
+    let total = 0;
+    for (let i = 1; i < measurePoints.length; i++) {
+      total += haversineMeters(measurePoints[i - 1], measurePoints[i]);
+    }
+    return total;
+  }
+
+  function updateMeasureReadout() {
+    if (measureTotalEl) measureTotalEl.textContent = formatDistance(totalMeasureDistance());
+  }
+
+  function redrawMeasureLine() {
+    if (measureLineGraphic) { view.graphics.remove(measureLineGraphic); measureLineGraphic = null; }
+    if (measurePoints.length >= 2) {
+      const paths = [measurePoints.map(function (p) {
+        const geo = toGeographic(p);
+        return [geo.x, geo.y];
+      })];
+      measureLineGraphic = new Graphic({
+        geometry: new Polyline({ paths: paths, spatialReference: { wkid: 4326 } }),
+        symbol: { type: "simple-line", color: [0, 121, 193, 0.9], width: 2, style: "dash" }
+      });
+      view.graphics.add(measureLineGraphic);
+    }
+  }
+
+  function addMeasureVertex(mapPoint) {
+    measurePoints.push(mapPoint);
+    const vertexGraphic = new Graphic({
+      geometry: mapPoint,
+      symbol: { type: "simple-marker", style: "circle", color: "#0079c1", size: 8, outline: { color: "white", width: 1.5 } }
+    });
+    measureVertexGraphics.push(vertexGraphic);
+    view.graphics.add(vertexGraphic);
+    redrawMeasureLine();
+    updateMeasureReadout();
+  }
+
+  function clearMeasure() {
+    measurePoints = [];
+    if (measureLineGraphic) { view.graphics.remove(measureLineGraphic); measureLineGraphic = null; }
+    measureVertexGraphics.forEach(function (g) { view.graphics.remove(g); });
+    measureVertexGraphics = [];
+    updateMeasureReadout();
+  }
+
+  function setMeasuring(on) {
+    measuring = on;
+    const btn = document.querySelector("#measureToggleBtn");
+    if (on) {
+      // Exit any other click-driven mode first so a map click is unambiguous.
+      if (addingPoint) cancelAddPoint();
+      if (selectedId) deselect();
+      if (btn) {
+        btn.textContent = "Stop Measuring";
+        btn.style.background = "#0079c1";
+        btn.style.color = "#fff";
+        btn.style.borderColor = "#0079c1";
+      }
+      document.getElementById("mapHint").style.display = "block";
+      document.getElementById("mapHint").textContent = "Click the map to add measurement points.";
+    } else {
+      if (btn) {
+        btn.textContent = "Start Measuring";
+        btn.style.background = "#fff";
+        btn.style.color = "#000";
+        btn.style.borderColor = "#ccc";
+      }
+      document.getElementById("mapHint").style.display = "none";
+      clearMeasure();
+    }
+  }
+
   function updateLocationReadout(geometry) {
     if (!geometry) {
       document.getElementById("detailLocation").textContent = "Not set";
@@ -848,6 +986,7 @@ require([
   // ------------------------------------------------------------------
   document.getElementById("editLocationBtn").addEventListener("click", function () {
     if (!selectedId) return;
+    if (measuring) setMeasuring(false);
     editingLocation = !editingLocation;
     const btn = document.getElementById("editLocationBtn");
     const hasPlacedGeometry = tempGraphic && tempGraphic.geometry;
@@ -886,6 +1025,11 @@ require([
   }
 
   function onMapClick(event) {
+    if (measuring) {
+      addMeasureVertex(view.toMap({ x: event.x, y: event.y }));
+      return;
+    }
+
     if (addingPoint) {
       const mapPoint = view.toMap({ x: event.x, y: event.y });
       finishAddPoint(mapPoint);
@@ -928,6 +1072,7 @@ require([
   // ------------------------------------------------------------------
   document.getElementById("addPointBtn").addEventListener("click", function () {
     if (addingPoint) { cancelAddPoint(); return; }
+    if (measuring) setMeasuring(false);
     deselect();
     addingPoint = true;
     const btn = document.getElementById("addPointBtn");
