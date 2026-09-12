@@ -388,12 +388,13 @@ require([
   "esri/geometry/support/webMercatorUtils",
   "esri/geometry/Polygon",
   "esri/geometry/Polyline",
+  "esri/geometry/Extent",
   "esri/widgets/BasemapGallery",
   "esri/widgets/Expand",
   "esri/widgets/Legend"
 ], function (
   esriId, OAuthInfo, Portal, Map, MapView, FeatureLayer, Graphic,
-  FeatureEffect, FeatureFilter, UniqueValueRenderer, LabelClass, webMercatorUtils, Polygon, Polyline,
+  FeatureEffect, FeatureFilter, UniqueValueRenderer, LabelClass, webMercatorUtils, Polygon, Polyline, Extent,
   BasemapGallery, Expand, Legend
 ) {
 
@@ -407,6 +408,18 @@ require([
   const STATUS_COMPLETED_VALUE = "completed";
   const STATUS_OPEN_VALUE = "open";
   const MAX_POINTS_LOADED = 2000; // raise if your layer has more points than this
+
+  // A separate hosted table for shared bookmarks (title + notes + a saved map extent),
+  // visible to every reviewer signed in to this app - not just the browser that made them.
+  // See the setup notes sent alongside this file for how to create this table.
+  const BOOKMARKS_LAYER_URL = "https://services9.arcgis.com/zEltomHsPUsr6yNG/arcgis/rest/services/Point_Review_Bookmarks/FeatureServer/0";
+  const BM_TITLE_FIELD = "Title";
+  const BM_NOTES_FIELD = "Notes";
+  const BM_XMIN_FIELD = "XMin";
+  const BM_YMIN_FIELD = "YMin";
+  const BM_XMAX_FIELD = "XMax";
+  const BM_YMAX_FIELD = "YMax";
+  const BM_CREATEDBY_FIELD = "CreatedBy";
   const USA_EXTENT = { xmin: -125, ymin: 24, xmax: -66, ymax: 49, spatialReference: { wkid: 4326 } };
   // ========================================================================
 
@@ -443,7 +456,8 @@ require([
   function onSignedIn() {
     const portal = new Portal({ url: PORTAL_URL, authMode: "immediate" });
     portal.load().then(function () {
-      document.getElementById("userLabel").textContent = portal.user ? portal.user.username : "Signed in";
+      currentUsername = portal.user ? portal.user.username : null;
+      document.getElementById("userLabel").textContent = currentUsername || "Signed in";
       showApp();
     });
   }
@@ -474,6 +488,18 @@ require([
   let measureVertexGraphics = [];
   let measureTotalEl = null;  // set once the measure panel is built
   const METERS_TO_FEET = 3.28084;
+
+  // Bookmarks (saved map views with a title + notes), shared with every
+  // reviewer via a hosted table rather than kept in one browser's storage.
+  let bookmarksLayer = null;
+  let bookmarksObjectIdField = "OBJECTID";
+  let bookmarks = [];
+  let editingBookmarkId = null;        // null = form closed, "new" = creating, else the bookmark's objectId
+  let pendingBookmarkExtentJSON = null; // geographic extent that will be saved with the form currently open
+  let bookmarksListEl = null;
+  let bookmarkFormEl = null;
+  let newBookmarkBtnEl = null;
+  let currentUsername = null;
 
   function isCompleted(status) {
     return (status || "").toString().toLowerCase() === STATUS_COMPLETED_VALUE.toLowerCase();
@@ -601,6 +627,58 @@ require([
         expandTooltip: "Measure distance"
       });
       view.ui.add(measureExpand, "top-right");
+
+      // Bookmarks: saved map views with a title + notes, stored in a shared
+      // hosted table so every signed-in reviewer sees the same bookmarks.
+      const bookmarksPanel = document.createElement("div");
+      bookmarksPanel.className = "esri-widget";
+      bookmarksPanel.style.cssText = "padding:12px;font-size:12px;width:230px;";
+      bookmarksPanel.innerHTML =
+        '<div style="font-weight:600;margin-bottom:8px;">Bookmarks</div>' +
+        '<div id="bookmarksList" style="max-height:180px;overflow-y:auto;"></div>' +
+        '<button id="newBookmarkBtn" type="button" ' +
+          'style="width:100%;margin-top:8px;padding:6px 8px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer;">' +
+          '+ New Bookmark</button>' +
+        '<div id="bookmarkForm" style="display:none;margin-top:8px;border-top:1px solid #eee;padding-top:8px;">' +
+          '<div id="bookmarkFormTitle" style="font-weight:600;margin-bottom:6px;">New Bookmark</div>' +
+          '<input id="bookmarkTitleInput" type="text" placeholder="Title" maxlength="120" ' +
+            'style="width:100%;box-sizing:border-box;padding:5px 6px;margin-bottom:6px;border:1px solid #ccc;border-radius:3px;font-size:12px;" />' +
+          '<textarea id="bookmarkNotesInput" placeholder="Notes (optional)" rows="2" ' +
+            'style="width:100%;box-sizing:border-box;padding:5px 6px;margin-bottom:6px;border:1px solid #ccc;border-radius:3px;font-size:12px;resize:vertical;"></textarea>' +
+          '<div id="bookmarkFormMsg" style="color:#c0392b;font-size:11px;margin-bottom:6px;min-height:14px;"></div>' +
+          '<button id="bookmarkUseCurrentViewBtn" type="button" ' +
+            'style="width:100%;margin-bottom:6px;padding:5px 6px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer;font-size:11px;">' +
+            'Use current map view</button>' +
+          '<div style="display:flex;gap:6px;">' +
+            '<button id="bookmarkSaveBtn" type="button" ' +
+              'style="flex:1;padding:5px 8px;border:1px solid #0079c1;border-radius:3px;background:#0079c1;color:#fff;cursor:pointer;">Save</button>' +
+            '<button id="bookmarkCancelBtn" type="button" ' +
+              'style="flex:1;padding:5px 8px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer;">Cancel</button>' +
+          '</div>' +
+        '</div>';
+
+      bookmarksListEl = bookmarksPanel.querySelector("#bookmarksList");
+      bookmarkFormEl = bookmarksPanel.querySelector("#bookmarkForm");
+      newBookmarkBtnEl = bookmarksPanel.querySelector("#newBookmarkBtn");
+
+      bookmarksPanel.querySelector("#newBookmarkBtn").addEventListener("click", function () { openBookmarkForm(null); });
+      bookmarksPanel.querySelector("#bookmarkSaveBtn").addEventListener("click", saveBookmarkForm);
+      bookmarksPanel.querySelector("#bookmarkCancelBtn").addEventListener("click", closeBookmarkForm);
+      bookmarksPanel.querySelector("#bookmarkUseCurrentViewBtn").addEventListener("click", function () {
+        pendingBookmarkExtentJSON = captureCurrentExtentGeographic();
+        const msgEl = bookmarksPanel.querySelector("#bookmarkFormMsg");
+        msgEl.style.color = "#555";
+        msgEl.textContent = "This bookmark will use the map's current view.";
+      });
+
+      initBookmarksLayer();
+
+      const bookmarksExpand = new Expand({
+        view: view,
+        content: bookmarksPanel,
+        expandTooltip: "Bookmarks"
+      });
+      view.ui.add(bookmarksExpand, "top-right");
     });
   }
 
@@ -962,6 +1040,247 @@ require([
       document.getElementById("mapHint").style.display = "none";
       clearMeasure();
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Bookmarks
+  // ------------------------------------------------------------------
+  // Convert the view's current extent (Web Mercator) to plain geographic
+  // xmin/ymin/xmax/ymax, matching the fields on the shared bookmarks table.
+  function captureCurrentExtentGeographic() {
+    if (!view.extent) return null;
+    const geo = toGeographic(view.extent);
+    return { xmin: geo.xmin, ymin: geo.ymin, xmax: geo.xmax, ymax: geo.ymax, spatialReference: { wkid: 4326 } };
+  }
+
+  function initBookmarksLayer() {
+    if (!BOOKMARKS_LAYER_URL || BOOKMARKS_LAYER_URL.indexOf("REPLACE_WITH") === 0) {
+      bookmarksListEl.innerHTML = "";
+      const msg = document.createElement("div");
+      msg.style.cssText = "color:#888;font-size:11px;padding:4px 0;";
+      msg.textContent = "Bookmarks aren't set up yet. Set BOOKMARKS_LAYER_URL near the top of the script.";
+      bookmarksListEl.appendChild(msg);
+      if (newBookmarkBtnEl) newBookmarkBtnEl.style.display = "none";
+      return;
+    }
+    bookmarksLayer = new FeatureLayer({ url: BOOKMARKS_LAYER_URL, outFields: ["*"] });
+    bookmarksLayer.load().then(function () {
+      bookmarksObjectIdField = bookmarksLayer.objectIdField || "OBJECTID";
+      refreshBookmarksFromLayer();
+    }).catch(function (err) {
+      console.error("Could not load the bookmarks table:", err);
+      bookmarksListEl.innerHTML = "";
+      const msg = document.createElement("div");
+      msg.style.cssText = "color:#c0392b;font-size:11px;padding:4px 0;";
+      msg.textContent = "Could not load bookmarks: " + (err && err.message ? err.message : err);
+      bookmarksListEl.appendChild(msg);
+      if (newBookmarkBtnEl) newBookmarkBtnEl.style.display = "none";
+    });
+  }
+
+  function refreshBookmarksFromLayer() {
+    const query = bookmarksLayer.createQuery();
+    query.where = "1=1";
+    query.outFields = ["*"];
+    query.returnGeometry = false;
+    return bookmarksLayer.queryFeatures(query).then(function (result) {
+      bookmarks = result.features.map(function (f) {
+        const a = f.attributes;
+        return {
+          id: a[bookmarksObjectIdField],
+          title: a[BM_TITLE_FIELD] || "",
+          notes: a[BM_NOTES_FIELD] || "",
+          createdBy: a[BM_CREATEDBY_FIELD] || "",
+          extent: {
+            xmin: a[BM_XMIN_FIELD], ymin: a[BM_YMIN_FIELD],
+            xmax: a[BM_XMAX_FIELD], ymax: a[BM_YMAX_FIELD],
+            spatialReference: { wkid: 4326 }
+          }
+        };
+      });
+      renderBookmarksList();
+    }).catch(function (err) {
+      console.error("Could not refresh bookmarks:", err);
+    });
+  }
+
+  function goToBookmark(bm) {
+    if (!bm.extent) return;
+    view.goTo(Extent.fromJSON(bm.extent)).catch(function (err) {
+      if (!err || err.name !== "AbortError") console.error("Could not navigate to bookmark:", err);
+    });
+  }
+
+  function deleteBookmark(id) {
+    if (!bookmarksLayer) return;
+    bookmarksLayer.applyEdits({ deleteFeatures: [{ objectId: id }] }).then(function (result) {
+      const delResult = result.deleteFeatureResults && result.deleteFeatureResults[0];
+      if (delResult && delResult.error) {
+        console.error("Delete failed:", delResult.error);
+        return;
+      }
+      if (editingBookmarkId === id) closeBookmarkForm();
+      refreshBookmarksFromLayer();
+    }).catch(function (err) {
+      console.error("Could not delete bookmark:", err);
+    });
+  }
+
+  function openBookmarkForm(id) {
+    if (!bookmarksLayer) return; // bookmarks table isn't configured yet
+    editingBookmarkId = id || "new";
+    const bm = id ? bookmarks.find(function (b) { return b.id === id; }) : null;
+    pendingBookmarkExtentJSON = bm ? bm.extent : captureCurrentExtentGeographic();
+
+    bookmarkFormEl.querySelector("#bookmarkTitleInput").value = bm ? bm.title : "";
+    bookmarkFormEl.querySelector("#bookmarkNotesInput").value = bm ? (bm.notes || "") : "";
+    bookmarkFormEl.querySelector("#bookmarkFormTitle").textContent = bm ? "Edit Bookmark" : "New Bookmark";
+    const msgEl = bookmarkFormEl.querySelector("#bookmarkFormMsg");
+    msgEl.style.color = "#c0392b";
+    msgEl.textContent = "";
+    bookmarkFormEl.style.display = "block";
+    if (newBookmarkBtnEl) newBookmarkBtnEl.style.display = "none";
+    bookmarkFormEl.querySelector("#bookmarkTitleInput").focus();
+  }
+
+  function closeBookmarkForm() {
+    editingBookmarkId = null;
+    pendingBookmarkExtentJSON = null;
+    bookmarkFormEl.style.display = "none";
+    if (newBookmarkBtnEl) newBookmarkBtnEl.style.display = "block";
+    const saveBtn = bookmarkFormEl.querySelector("#bookmarkSaveBtn");
+    if (saveBtn) saveBtn.disabled = false;
+  }
+
+  function saveBookmarkForm() {
+    const title = bookmarkFormEl.querySelector("#bookmarkTitleInput").value.trim();
+    const notes = bookmarkFormEl.querySelector("#bookmarkNotesInput").value.trim();
+    const msgEl = bookmarkFormEl.querySelector("#bookmarkFormMsg");
+
+    if (!title) {
+      msgEl.style.color = "#c0392b";
+      msgEl.textContent = "Please enter a title.";
+      return;
+    }
+    if (!bookmarksLayer || !pendingBookmarkExtentJSON) {
+      msgEl.style.color = "#c0392b";
+      msgEl.textContent = "Bookmarks aren't set up yet.";
+      return;
+    }
+
+    const saveBtn = bookmarkFormEl.querySelector("#bookmarkSaveBtn");
+    saveBtn.disabled = true;
+    msgEl.style.color = "#888";
+    msgEl.textContent = "Saving...";
+
+    const attrs = {};
+    attrs[BM_TITLE_FIELD] = title;
+    attrs[BM_NOTES_FIELD] = notes;
+    attrs[BM_XMIN_FIELD] = pendingBookmarkExtentJSON.xmin;
+    attrs[BM_YMIN_FIELD] = pendingBookmarkExtentJSON.ymin;
+    attrs[BM_XMAX_FIELD] = pendingBookmarkExtentJSON.xmax;
+    attrs[BM_YMAX_FIELD] = pendingBookmarkExtentJSON.ymax;
+
+    let editPromise;
+    if (editingBookmarkId && editingBookmarkId !== "new") {
+      attrs[bookmarksObjectIdField] = editingBookmarkId;
+      editPromise = bookmarksLayer.applyEdits({ updateFeatures: [{ attributes: attrs }] });
+    } else {
+      if (currentUsername) attrs[BM_CREATEDBY_FIELD] = currentUsername;
+      editPromise = bookmarksLayer.applyEdits({ addFeatures: [{ attributes: attrs }] });
+    }
+
+    editPromise.then(function (result) {
+      saveBtn.disabled = false;
+      const editResult = (result.addFeatureResults && result.addFeatureResults[0]) ||
+        (result.updateFeatureResults && result.updateFeatureResults[0]);
+      if (editResult && editResult.error) {
+        msgEl.style.color = "#c0392b";
+        msgEl.textContent = "Save failed: " + editResult.error.message;
+        return;
+      }
+      closeBookmarkForm();
+      refreshBookmarksFromLayer();
+    }).catch(function (err) {
+      saveBtn.disabled = false;
+      msgEl.style.color = "#c0392b";
+      msgEl.textContent = "Save failed: " + (err && err.message ? err.message : err);
+    });
+  }
+
+  function renderBookmarksList() {
+    if (!bookmarksListEl) return;
+    bookmarksListEl.innerHTML = "";
+
+    if (bookmarks.length === 0) {
+      const empty = document.createElement("div");
+      empty.style.cssText = "color:#888;font-size:11px;padding:4px 0;";
+      empty.textContent = "No bookmarks yet.";
+      bookmarksListEl.appendChild(empty);
+      return;
+    }
+
+    bookmarks.forEach(function (bm) {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:flex-start;gap:6px;padding:6px 0;border-top:1px solid #eee;";
+
+      const textWrap = document.createElement("div");
+      textWrap.style.cssText = "flex:1;min-width:0;cursor:pointer;";
+      const titleEl = document.createElement("div");
+      titleEl.style.cssText = "font-weight:600;color:#222;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      titleEl.textContent = bm.title;
+      textWrap.appendChild(titleEl);
+      if (bm.notes) {
+        const notesEl = document.createElement("div");
+        notesEl.style.cssText = "color:#777;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+        notesEl.textContent = bm.notes;
+        textWrap.appendChild(notesEl);
+      }
+      if (bm.createdBy) {
+        const byEl = document.createElement("div");
+        byEl.style.cssText = "color:#aaa;font-size:10px;";
+        byEl.textContent = "by " + bm.createdBy;
+        textWrap.appendChild(byEl);
+      }
+      textWrap.title = "Zoom to this bookmark";
+      textWrap.addEventListener("click", function () { goToBookmark(bm); });
+
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.textContent = "Edit";
+      editBtn.style.cssText = "flex:0 0 auto;padding:3px 6px;font-size:11px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer;";
+      editBtn.addEventListener("click", function (e) { e.stopPropagation(); openBookmarkForm(bm.id); });
+
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.textContent = "Delete";
+      delBtn.style.cssText = "flex:0 0 auto;padding:3px 6px;font-size:11px;border:1px solid #ccc;border-radius:3px;background:#fff;color:#c0392b;cursor:pointer;";
+      let confirming = false;
+      let revertTimer = null;
+      delBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (!confirming) {
+          confirming = true;
+          delBtn.textContent = "Confirm?";
+          delBtn.style.background = "#c0392b";
+          delBtn.style.color = "#fff";
+          revertTimer = setTimeout(function () {
+            confirming = false;
+            delBtn.textContent = "Delete";
+            delBtn.style.background = "#fff";
+            delBtn.style.color = "#c0392b";
+          }, 4000);
+        } else {
+          clearTimeout(revertTimer);
+          deleteBookmark(bm.id);
+        }
+      });
+
+      row.appendChild(textWrap);
+      row.appendChild(editBtn);
+      row.appendChild(delBtn);
+      bookmarksListEl.appendChild(row);
+    });
   }
 
   function updateLocationReadout(geometry) {
